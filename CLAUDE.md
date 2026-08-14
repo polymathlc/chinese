@@ -71,10 +71,36 @@ filter bug. Three things follow:
   could find belongs to another subject, and every verdict it offered would be
   wrong. `tools/bank-rescue-tests.mjs` went with it.
 
+- **`users/{uid}` — the bare document — is the ONE thing all three portals
+  really do share.** One project, one sign-in, one uid, so it is the same
+  document in every subject. Nothing here may read or write it. Two things had
+  to move for that to be true, and both had already been shipped:
+  - **The legacy single-doc migration is gone.** Both siblings carry one: the
+    Science app once kept its whole bank as `questionBank` / `vettingList`
+    ARRAYS on that document, and the code that migrates them into subcollections
+    came across with the fork. Here it is a door into this app's bank from the
+    outside — on the teacher's first sign-in it would read a legacy array
+    belonging to SCIENCE, write every question in it into `questionsZh` through
+    `_qRef`, then blank the arrays so nothing was left to show where they came
+    from or to give back. This app has never had a single-doc format, so any
+    such array under that uid belongs to another subject. Do not port it back.
+  - **The student roster lives at `{SETTINGS_COL}/students`**, not on the shared
+    document. Both siblings write `students` and `studentSetupSeen` straight
+    onto it, so on the shared document the teacher's Chinese roster and their
+    English roster are one array and the last app to save wins.
+
 **A name the Firestore rules do not know about fails closed**: reads come back
 empty, writes are denied, and nothing on screen explains why. So a new
 collection means a matching block in `firestore.rules`, deployed alongside the
-Science app's rules — never replacing them. `README.md` has the deploy steps.
+other two apps' rules — never replacing them. `README.md` has the deploy steps.
+
+**`node tools/bank-isolation-tests.mjs` is what holds all of this in place.** It
+reads app.js as text and checks the SHAPE of every Firestore path: that each
+collection comes from a constant and never a literal, that every constant is
+`Zh`-marked, that no sibling's name is used as a collection, that the four bank
+doors go through `QUESTIONS_COL` / `VETTING_COL`, that nothing addresses the
+bare user document, that the migration has not come back, and that the rules
+cover this app's collections and only those. Run it after touching any path.
 
 The bank starts EMPTY, deliberately: `users/{uid}/questionsZh` does not exist
 until the first Chinese question is written.
@@ -925,7 +951,7 @@ reported in chat, to know whether the deploy actually went through.
   named constant used at every call site rather than a string typed out in three
   places, and swapping the model means checking its scale first. The Science app
   (`polymathlc/cer`) carries the same pair — keep the two in step.
-- Run the eleven harnesses after touching what they cover — every failure they
+- Run the twelve harnesses after touching what they cover — every failure they
   catch is **silent**, with nothing thrown and nothing wrong on screen:
   - `node tools/answer-key-tests.mjs`
   - `node tools/check-questions-tests.mjs`
@@ -936,6 +962,13 @@ reported in chat, to know whether the deploy actually went through.
     purges somebody's question early, in a background sweep, with nothing on
     screen; a field lost on the way in is a question that comes back broken a
     week later with nothing left to compare it against.
+  - `node tools/bank-isolation-tests.mjs` — that this app cannot reach another
+    subject's question bank. Three portals share one project and one uid, and
+    the only thing keeping their banks apart is the NAME of each collection, so
+    this checks the shape of every path in the file. It is a test rather than a
+    comment because the failure it guards has already happened once and did not
+    look like a failure: the wrong subject's questions on the bank page, which
+    reads as a filter bug.
   - `node tools/pinyin-ime-tests.mjs` — the input method's candidate ORDER, the
     word segmenter, and the Chinese-aware blank tokenizer. A candidate list in
     the wrong order is the wrong character typed into a question and saved. A

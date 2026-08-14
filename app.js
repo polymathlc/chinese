@@ -1817,7 +1817,7 @@ async function enterApp(user) {
 
 // App version shown to admins in the sidebar. BUMP THIS on every change you
 // deploy (see CLAUDE.md) so the admin can confirm the latest build is live.
-const APP_VERSION = 'v2.0.0';
+const APP_VERSION = 'v2.0.1';
 // ---- The always-visible session bar ----
 // Staff must never be in any doubt about whose account is being played, so
 // this sits above everything until the session ends.
@@ -18473,48 +18473,33 @@ function _xtGuardUnload(e) {
 // no-op kept so any stray internal calls don't throw
 function saveToStorage() {}
 
-// Load all questions from subcollections; auto-migrates old single-doc format
+// Load all questions from this app's own subcollections.
+//
+// NO LEGACY SINGLE-DOC MIGRATION HERE — and that absence is load-bearing.
+//
+// Both siblings carry one: the Science app once kept its whole bank as
+// `questionBank` / `vettingList` ARRAYS inside the `users/{uid}` document, and
+// the English portal inherited the code that reads those arrays and writes each
+// question into its own subcollection.
+//
+// `users/{uid}` is the ONE document all three apps genuinely share — same
+// Firebase project, same sign-in, so the same uid. Ported here, that migration
+// would open the door v1.3.0 closed, from the other side: on the teacher's
+// first sign-in it would read a legacy array belonging to SCIENCE, write every
+// question in it into `questionsZh` through `_qRef`, and then blank the arrays
+// so nothing was left to show where they came from — or to give back. A Chinese
+// bank full of Science questions, populated silently, once, at the moment the
+// portal was first opened.
+//
+// This app has never had a single-doc format. It was created with
+// subcollections, so there is nothing here that could legitimately need
+// migrating, and any legacy array under that uid belongs to another subject.
+//
+// The same reasoning bans any future read of `users/{uid}` for question data.
+// The document is shared; the subcollections under it are not.
 async function loadFromStorage() {
   if (!currentUser) return;
   try {
-    // ── Migration: old format stored arrays inside users/{uid} ──
-    const userRef = doc(db, 'users', currentUser.uid);
-    const userSnap = await getDoc(userRef);
-    if (userSnap.exists()) {
-      const old = userSnap.data();
-      if (Array.isArray(old.questionBank) || Array.isArray(old.vettingList)) {
-        console.log('Migrating from legacy single-doc format…');
-        const writes = [];
-        (old.questionBank || []).forEach(q => {
-          if (q && q.id) {
-            // Re-save through collectQuestionData-style conversion so nested arrays are fixed
-            const safe = JSON.parse(JSON.stringify(q));
-            if (Array.isArray(safe.blocks)) {
-              safe.blocks.forEach(b => {
-                if (b.type === 'table' && Array.isArray(b.data)) b.data = tableDataToFirestore(b.data);
-              });
-            }
-            writes.push(setDoc(_qRef(q.id), safe));
-          }
-        });
-        (old.vettingList || []).forEach(q => {
-          if (q && q.id) {
-            const safe = JSON.parse(JSON.stringify(q));
-            if (Array.isArray(safe.blocks)) {
-              safe.blocks.forEach(b => {
-                if (b.type === 'table' && Array.isArray(b.data)) b.data = tableDataToFirestore(b.data);
-              });
-            }
-            writes.push(setDoc(_vRef(q.id), safe));
-          }
-        });
-        await Promise.all(writes);
-        // Overwrite user doc — remove the old arrays so we don't re-migrate
-        await setDoc(userRef, { _v: 2, migratedAt: new Date().toISOString() });
-        console.log('Migration complete.');
-      }
-    }
-
     // ── Load from subcollections ──
     const [qSnap, vSnap] = await Promise.all([
       getDocs(_qCol()),
@@ -19112,10 +19097,20 @@ function skipStudentSetup() {
   document.getElementById('studentSetupOverlay').classList.remove('active');
 }
 
+// users/{uid}/{SETTINGS_COL}/students, NOT the bare users/{uid} document.
+//
+// That document is the one thing all three portals genuinely share — one
+// Firebase project, one sign-in, one uid — and both siblings write exactly
+// these two field names to it. On the shared document the teacher's Chinese
+// roster and their English roster are the same array, so adding a P5 student in
+// one portal changes the other, and whichever app saved last wins outright.
+// A subcollection under the same uid is this app's alone, like every other
+// path here.
+function _studentsRef() { return doc(db, 'users', currentUser.uid, SETTINGS_COL, 'students'); }
+
 function saveStudentsToStorage() {
   if (!currentUser) return;
-  const ref = doc(db, 'users', currentUser.uid);
-  setDoc(ref, { students, studentSetupSeen }, { merge: true }).catch(err => {
+  setDoc(_studentsRef(), { students, studentSetupSeen }, { merge: true }).catch(err => {
     console.error('Failed to save students:', err);
   });
 }
@@ -19123,8 +19118,7 @@ function saveStudentsToStorage() {
 async function loadStudentsFromStorage() {
   if (!currentUser) return;
   try {
-    const ref = doc(db, 'users', currentUser.uid);
-    const snap = await getDoc(ref);
+    const snap = await getDoc(_studentsRef());
     if (snap.exists()) {
       const data = snap.data();
       students = data.students || [];
