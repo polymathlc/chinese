@@ -49,6 +49,9 @@ const section = [
   cut('function qApplyAiParts', '// Should THIS block print the part label', 'apply + qPartOf'),
   cut('function qBlockOpensPart(b)', '// Does this question use parts at all', 'openers'),
   cut('function buildBlocksFromAi', '\n// Build a full pending question object', 'builder'),
+  // The real 画线 normaliser, not a stub: the builder's text branch runs every
+  // block through it, and a text block is what most of these cases are.
+  cut('function _aiUnderline(text)', '\n// The "tags" instruction', 'underline'),
   // The handful of leaf helpers the builder leans on, reduced to their contract.
   `
 let _n = 0;

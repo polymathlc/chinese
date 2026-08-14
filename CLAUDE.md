@@ -190,6 +190,44 @@ punctuation**; and **JSON keys**, which every caller parses by.
 It is PREPENDED, never appended — many prompts end with the material they work
 on (`"Text:\n" + text`), and a rule bolted on after that reads as more material.
 
+## 画线词语 — the underlined word (v2.1.0)
+
+The paper underlines the word a question is about, and in 汉语拼音 that
+underline **is** the question:
+
+> 弟弟不小心把果汁洒在自己的<u>衬衫</u>上，哭着喊妈妈帮他换。
+> （1）cēn sān （2）cèn sān （3）chēn shān （4）chèn shān
+
+Transcribe that sentence flat and the question still reads perfectly, still
+prints perfectly, and no longer says which of a dozen words the four spellings
+belong to. Every option becomes a plausible answer to a question nobody can
+answer — and nothing on any screen looks wrong. It is the same class of failure
+as pinyin rendered into characters, which is why the rule sits beside that one.
+
+- **The model is told once, in `_partsPromptRules()`** — the ONE fragment all
+  five build prompts carry — so 🤖 Build from screenshot, ⚡ Rapid add, 📄 Exam
+  Paper, the bulk PDF import and 🔁 Regenerate copy gained it together. It says
+  in as many words that `<u>…</u>` **survives the "plain text only, no markdown"
+  line** four of those prompts end with; without that the model resolves the
+  contradiction by dropping the tag, which is the bug arriving through its
+  own fix.
+- **`_aiUnderline` is the ONE place an underline becomes markup**, called from
+  `buildBlocksFromAi`'s text branch — the function every AI authoring path goes
+  through. Three forms arrive and leave as one: `<u>…</u>`, the `__word__` a
+  model reaching for markdown writes (the same marker a pasted passage carries
+  into `_pbPassageHtml`), and the `&lt;u&gt;` a model escapes on the way through
+  JSON. An **unbalanced tag is dropped**, never repaired: an opener with no
+  closer underlines the rest of the question, which reads as a broken app.
+- **`escapeHtmlKeepLines` keeps `<u>` and nothing else.** That function is what
+  BOTH print builders send a text block through, and it stripped every tag — so
+  the underline showed on screen and vanished on paper, the one surface nobody
+  checks until the class is sitting in front of it. The tag crosses the escape
+  on two control characters, which are stripped from the input first so nothing
+  an author typed can pose as the marker.
+- The editor's **U button** writes the same `<u>`, and the text block stores
+  `innerHTML`, so an author can add or remove one by hand and it round-trips.
+- Run **`node tools/underline-tests.mjs`** after touching any of it.
+
 ## Learner progress
 
 `progress` (in `app.js`, search `LEARNER PROGRESS`) is the plain record of work
@@ -439,6 +477,57 @@ nothing saying which four belong to which blank.
   than `fillblank`'s reason: the read-only rendering paints the correct option
   green, so falling through to it prints a worksheet with every answer circled.
 - Run **`node tools/clozemcq-tests.mjs`** after touching any of it.
+
+## How many questions is a page? (v2.1.0)
+
+A 语文应用 page of **1, 2, 3, 4, 5** holds FIVE questions, not one question with
+five parts. ⚡ Rapid add puts five rows in vetting.
+
+**`_aiQuestionPayloads(parsed)` is the ONE place a build reply becomes the list
+of questions it describes**, and every path that reads one asks it. Both shapes
+work: the old single-question object, and the `questions` array the prompt now
+asks for.
+
+- **The rule is the shared stimulus, not the numbering.** Numbered questions
+  that share nothing are SEPARATE; a 阅读理解 passage, poster or infographic
+  followed by numbered questions is still ONE question with lettered parts,
+  because those questions cannot be read without it, and a 短文填空 is ONE
+  question however many blanks run through it. The prompt gives the model the
+  test in one line: *if you deleted every other question on the page, would this
+  one still make complete sense?*
+- **The paper's number is only the signal.** It is never kept — no `part`, and
+  not in any block's text. `_epStripNumbering` runs as a guard on a
+  multi-question page. **Its regexes had to learn full-width numbering**:
+  `ZH_PROMPT_RULES` asks for the paper's punctuation exactly as printed, so a
+  华文 paper's questions arrive as `2、`, `２．` and `（2）`, and a stripper that
+  knew only `44.` and `(44)` read every Chinese paper as unnumbered. A BARE
+  leading number is still deliberately left alone in both widths, because
+  refusing it is what stops "50毫升的水" losing its 50.
+- **An entry INHERITS the title / topic / category / tags it does not repeat.**
+  A model told to write them per entry writes them once at the top and stops,
+  and a question landing in vetting untopiced is one an author must open by hand.
+- **The block type is chosen PER question** — the prompt names `synthesis`,
+  `mcq` and `clozemcq` — so two questions on one page can be different types.
+- **An empty or unusable `questions` array falls back to the whole reply**, and
+  a reply with no usable blocks at all returns `[]` — Rapid add turns that into
+  a visible red card rather than a blank question.
+- **Each question is saved as it is built**, not batched at the end: a failure on
+  question 4 must not lose the three that already read perfectly. Each crops
+  from its OWN entry's rectangles, or five questions share the first one's
+  pictures.
+- **The whole-screenshot B&W backup is single-question only.** On a page of five
+  it would give every one of them the same whole-page picture, which is worse
+  than no picture at all.
+- 🤖 **Build from screenshot loads the FIRST and says so** — the editor holds one
+  question, and silently building one of five with nothing on screen to say the
+  other four existed is how they get lost. It hands **that entry**, never the
+  whole reply, to `_autoFillDiagramsFromBoxes`: given the reply, a page that came
+  back as a `questions` array has no `blocks` of its own and the pictures quietly
+  stop being cropped.
+- The rapid budget is **8192 tokens**, because running out does not fail — it
+  TRUNCATES, and `_repairAIJson` hands back a valid-looking reply missing its
+  last questions. `_aiJsonRepaired` is what warns the author instead.
+- Run **`node tools/rapid-split-tests.mjs`** after touching any of it.
 
 ## ✍️ Synthesis & transformation (`sy*`, block type `synthesis`)
 
@@ -951,7 +1040,7 @@ reported in chat, to know whether the deploy actually went through.
   named constant used at every call site rather than a string typed out in three
   places, and swapping the model means checking its scale first. The Science app
   (`polymathlc/cer`) carries the same pair — keep the two in step.
-- Run the twelve harnesses after touching what they cover — every failure they
+- Run the fourteen harnesses after touching what they cover — every failure they
   catch is **silent**, with nothing thrown and nothing wrong on screen:
   - `node tools/answer-key-tests.mjs`
   - `node tools/check-questions-tests.mjs`
@@ -997,6 +1086,16 @@ reported in chat, to know whether the deploy actually went through.
     one line early swallows the first option list; a question number read off a
     quantity cuts the passage in half; a bank that does not contain one of its
     own answers renders and prints perfectly and is unanswerable.
+  - `node tools/rapid-split-tests.mjs` — how many questions a page holds, and
+    the full-width numbering strip that guards it. Split a 短文填空 and its
+    blanks lose the passage they are about; fail to split a 语文应用 page of
+    five and four questions are silently thrown away, leaving one row in vetting
+    that looks perfectly fine.
+  - `node tools/underline-tests.mjs` — 画线词语. The paper underlines the word a
+    汉语拼音 question is about and the four options are that word's pinyin, so
+    an underline lost in transcription — or kept on screen and stripped by the
+    print builder — leaves a question that reads perfectly and cannot be
+    answered, with four plausible options and no word attached to them.
 
 ### Two CSS traps in `index.html`
 
