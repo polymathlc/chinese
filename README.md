@@ -137,6 +137,7 @@ for t in tools/*.mjs; do node "$t" || break; done
 node tools/answer-key-tests.mjs        # a key that drops a question prints fine
 node tools/check-questions-tests.mjs   # a bad auto-fix destroys a question
 node tools/objective-tag-tests.mjs     # a lost tag throws nothing
+node tools/bank-isolation-tests.mjs    # a shared bank looks like a filter bug
 node tools/pinyin-ime-tests.mjs        # the wrong character, typed and saved
 node tools/clozemcq-tests.mjs          # 短文填空 keyed to the wrong option
 ```
