@@ -31,9 +31,11 @@ const slice = (from, to, what) => {
   return src.slice(a, b);
 };
 
-// The parse, the key and the print builder. The student surface below it is all
-// DOM and is left out; what is under test is what decides right from wrong.
+// The parse, the key and the print builder — plus the two functions that build
+// the student's DROP-DOWN, which is where the choice is now read from and
+// therefore where a silently wrong answer would come from.
 const cm = slice('const CM_START_DEFAULT =', '// ---- the student\'s passage', 'clozemcq parse')
+  + slice('function _cmOptionsHtml(options, picked)', 'function _cmWrapOf(', 'clozemcq dropdown')
   + slice('function cmPrintHtml(block)', '// ---- the editor ---', 'clozemcq print')
   + slice('function cmSetCorrect(id, blankIdx, optIdx)', '\n}\n', 'clozemcq set correct') + '\n}\n';
 
@@ -50,7 +52,7 @@ function cmSyncEditor() {}
 
 const M = await import('data:text/javascript;base64,' + Buffer.from(
   preamble + cm +
-  '\nexport { _cmParse, _cmParseBlank, cmBlanks, cmHasBlanks, cmUnanswered, _cmStart, cmIntro, cmPrintHtml, cmAnswerKeyText, cmSetCorrect, blocks, CM_START_DEFAULT };'
+  '\nexport { _cmParse, _cmParseBlank, cmBlanks, cmHasBlanks, cmUnanswered, _cmStart, cmIntro, cmPrintHtml, cmAnswerKeyText, cmSetCorrect, _cmOptionsHtml, cmStudentHtml, blocks, CM_START_DEFAULT };'
 ).toString('base64'));
 
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -235,6 +237,63 @@ test('a half-written blank is skipped, not counted', () => {
 test('ticking out of range changes nothing', () => {
   const t = 'a[[甲|乙|丙]]b';
   eq(setCorrect(t, 9, 0), t);
+});
+
+// ── the student's DROP-DOWN ──────────────────────────────────────────────────
+// The choice is read straight off the <select>, so what the option VALUES are
+// is what the answer is. Every failure here marks a right answer wrong while
+// the passage on screen looks perfectly normal.
+
+test('every option keeps the PAPER\'s number', () => {
+  // The marking scheme answers "16 (3)", so the number is half the answer: a
+  // list showing only the words leaves the student unable to check their work.
+  const h = M._cmOptionsHtml(['总算', '就算', '不管', '尽管'], -1);
+  ok(h.indexOf('（1）总算') > 0, h);
+  ok(h.indexOf('（3）不管') > 0, h);
+  eq((h.match(/<option/g) || []).length, 5, 'four choices and the empty one');
+});
+
+test('the empty choice is -1, never 0', () => {
+  // Number('') is 0, which is option (1). An unanswered blank read as "(1)"
+  // marks the student against a word they never picked.
+  const h = M._cmOptionsHtml(['甲', '乙'], -1);
+  ok(/<option value="-1">—<\/option>/.test(h), h);
+  ok(h.indexOf('selected') < 0, 'nothing is chosen until the student chooses');
+});
+
+test('a blank that already holds a choice keeps it', () => {
+  const h = M._cmOptionsHtml(['甲', '乙', '丙'], 2);
+  ok(/<option value="2" selected>（3）丙<\/option>/.test(h), h);
+  eq((h.match(/selected/g) || []).length, 1, 'exactly one option can be chosen');
+});
+
+test('the passage renders one drop-down per blank, numbered from the paper', () => {
+  const html = M.cmStudentHtml({ id: 'b1', text: '课外活动[[总算|就算|*不管|尽管]]是体育[[甲|*乙]]艺术。', startNum: 16 }, '#c', [0, 1]);
+  eq((html.match(/class="cm-pick"/g) || []).length, 2, 'a blank lost its drop-down');
+  ok(/data-cm-b="0"/.test(html) && /data-cm-b="1"/.test(html), 'the blanks are not keyed by index');
+  ok(html.indexOf('>16</b>') > 0 && html.indexOf('>17</b>') > 0, 'the paper numbers from 16, not from 1');
+});
+
+test('the drop-down never gives the answer away', () => {
+  // The author's tick is a `*` in the markup. Leak it into the list and every
+  // blank prints its own answer.
+  const html = M.cmStudentHtml({ id: 'b1', text: 'a[[总算|就算|*不管|尽管]]b', startNum: 16 }, '#c', [0]);
+  ok(html.indexOf('*') < 0, 'the asterisk reached the student');
+  ok(html.indexOf('selected') < 0, 'the correct option arrived pre-selected');
+  ok(html.indexOf('（3）不管') > 0, 'and the option itself must still be offered');
+});
+
+test('a blank with fewer than two choices is not a blank', () => {
+  const html = M.cmStudentHtml({ id: 'b1', text: 'a[[单]]b[[甲|乙]]c', startNum: 16 }, '#c', [0]);
+  eq((html.match(/class="cm-pick"/g) || []).length, 1, 'a one-word bracket is not a question');
+});
+
+test('the drop-down is wired to the app\'s ONE change listener', () => {
+  // This app builds its DOM continuously, so the pick is read by a delegated
+  // listener on the document. Lose that wiring and every blank still renders,
+  // still opens, still lets a word be chosen — and nothing is ever recorded.
+  ok(/addEventListener\('change'[\s\S]{0,240}closest\('\.cm-pick'\)[\s\S]{0,120}cmPicked\(/.test(src),
+    'nothing calls cmPicked when a blank changes');
 });
 
 // ── runner ───────────────────────────────────────────────────────────────────
