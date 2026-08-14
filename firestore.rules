@@ -1,0 +1,155 @@
+rules_version = '2';
+
+// =============================================================================
+// Chinese Learning Portal — Firestore security rules
+//
+// This app shares a Firebase project with TWO siblings — the Science portal
+// (`polymathlc/cer`) and the English portal (`polymathlc/english`) it was forked
+// from — and shares NO DATA with either: every collection below carries a `Zh`
+// name of its own. Deploy these rules ALONGSIDE both of the other apps' rules
+// (paste the match blocks into the same `service cloud.firestore` block) —
+// replacing that file with this one would lock the other two out of their own
+// data.
+//
+// A name the rules do not know about fails closed: reads come back empty and
+// writes are denied, with nothing broken-looking on screen to explain why. So
+// if a page is mysteriously blank after a rename, look here first.
+// =============================================================================
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn()      { return request.auth != null; }
+    function isSelf(uid)     { return signedIn() && request.auth.uid == uid; }
+    // The teacher's own account, published at zhConfig/admin so every student
+    // resolves the same question bank.
+    function adminUid()      { return get(/databases/$(database)/documents/zhConfig/admin).data.uid; }
+    function isAdmin()       { return signedIn() && request.auth.uid == adminUid(); }
+
+    // ---- the user tree ------------------------------------------------------
+    // A student owns everything under their own uid. The bank, the settings and
+    // the teaching notes under the ADMIN's uid are readable by everyone signed
+    // in, because that is what students are served from.
+    match /users/{uid} {
+      allow read, write: if isSelf(uid);
+
+      match /questionsZh/{qid}      { allow read: if signedIn(); allow write: if isSelf(uid); }
+      match /vettingZh/{qid}        { allow read: if signedIn(); allow write: if isSelf(uid); }
+      // The bin: questions deleted in the last 7 days, restorable until then.
+      // Deliberately NOT readable by every signed-in account the way the bank
+      // is — a deleted question must not be servable to a student, and the only
+      // people who ever read this are the ones who can put it back.
+      match /binZh/{qid}            { allow read, write: if isSelf(uid); }
+      match /settingsZh/{sid}       { allow read: if signedIn(); allow write: if isSelf(uid); }
+      match /teachingNotesZh/{nid}  { allow read: if signedIn(); allow write: if isSelf(uid); }
+      match /worksheetsZh/{wid}     { allow read, write: if isSelf(uid); }
+      match /statsZh/{sid}          { allow read, write: if isSelf(uid); }
+      match /workSessionsZh/{wid}   { allow read, write: if isSelf(uid); }
+
+      // Rules do NOT cascade into subcollections: the `allow read, write` on
+      // /users/{uid} above covers that DOCUMENT and nothing beneath it, and the
+      // recursive wildcard at the end of this block grants read only. So every
+      // subcollection the app WRITES needs a line here or the write is denied —
+      // silently, because all three of these are fire-and-forget.
+      //
+      // mistakesZh  — one record per wrong answer; what the revision cards and
+      //               the learning-gap list are both built from.
+      // flashcardsZh— the generated revision decks.
+      // scheduledQuestionsZh — the teacher's queued releases.
+      //
+      // In the English portal these three carried their PLAIN names until
+      // v1.3.0, which meant the Science app was writing to the same three
+      // collections under the same user: one mistake log and one revision deck
+      // holding both subjects, and a Science question queued for release
+      // landing in the ENGLISH bank on its release date. Both siblings now
+      // carry a suffix, and so does every name here.
+      //
+      // The learning-gap list itself needs no line: it is a single document at
+      // settingsZh/learningGaps, already covered above.
+      match /mistakesZh/{mid}            { allow read, write: if isSelf(uid); }
+      match /flashcardsZh/{fid}          { allow read, write: if isSelf(uid); }
+      match /scheduledQuestionsZh/{sqid} { allow read, write: if isSelf(uid); }
+
+      // The English portal carries a one-time rescue (📦 From Science bank,
+      // `_lb*`) that reads and deletes from the SCIENCE app's collections. This
+      // app does NOT have it and must not grow one — it was forked after the
+      // fix, has never written outside its own bank, and anything that tool
+      // could find belongs to one of the other two subjects. So there is
+      // deliberately no rule here for a plain `questions` / `vetting` /
+      // `scheduledQuestions`: this file describes `Zh` collections only.
+
+      // An employee authors straight into the teacher's bank, so they need to
+      // write there. Widen this only if you actually hire one.
+      match /{document=**}          { allow read: if isSelf(uid); }
+    }
+
+    // ---- shared collections -------------------------------------------------
+    // Where the question bank lives. Only the admin may move the pointer.
+    match /zhConfig/{docId} {
+      allow read:  if signedIn();
+      allow write: if isAdmin();
+    }
+
+    // Name, level and the accepted terms. A student writes their own; the
+    // teacher reads the roster.
+    match /zhUserProfiles/{uid} {
+      allow read:   if signedIn();
+      allow create: if isSelf(uid) || isAdmin();
+      allow update: if isSelf(uid) || isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    // Counts only — questions marked, accuracy, day streak. Never answers.
+    match /zhProgress/{uid} {
+      allow read:   if signedIn();
+      allow write:  if isSelf(uid) || isAdmin();
+    }
+
+    // One row per marked question, used for the report and the activity view.
+    match /zhQuestionAttempts/{docId} {
+      allow read:   if signedIn();
+      allow create: if signedIn();
+      allow update, delete: if isAdmin();
+    }
+
+    match /zhLoginEvents/{docId} {
+      allow read:   if signedIn();
+      allow create: if signedIn();
+      allow update, delete: if isAdmin();
+    }
+
+    // A student reports a broken question; the teacher clears it.
+    match /zhFlaggedQuestions/{docId} {
+      allow read:   if signedIn();
+      allow create: if signedIn();
+      allow update, delete: if isAdmin();
+    }
+
+    // The bulletin board. A student's post starts 'pending'; only the teacher
+    // approves, pins or removes one.
+    match /zhCommunity/{docId} {
+      allow read:   if signedIn();
+      allow create: if signedIn();
+      allow update, delete: if isAdmin();
+    }
+
+    // Timed question sprints. Students write their own score into the doc.
+    match /zhEncounterQuests/{docId} {
+      allow read:   if signedIn();
+      allow create, delete: if isAdmin();
+      allow update: if signedIn();
+    }
+
+    match /zhMessages/{docId} {
+      allow read:   if signedIn();
+      allow create: if signedIn();
+      allow update: if signedIn();
+      allow delete: if isAdmin();
+    }
+
+    // An author's clocked-on sessions. Shared so the teacher can read the team's.
+    match /zhWorkSessions/{docId} {
+      allow read:   if isAdmin() || (signedIn() && docId.split('_')[0] == request.auth.uid);
+      allow write:  if signedIn() && docId.split('_')[0] == request.auth.uid;
+    }
+  }
+}
