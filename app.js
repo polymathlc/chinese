@@ -1817,7 +1817,7 @@ async function enterApp(user) {
 
 // App version shown to admins in the sidebar. BUMP THIS on every change you
 // deploy (see CLAUDE.md) so the admin can confirm the latest build is live.
-const APP_VERSION = 'v2.1.0';
+const APP_VERSION = 'v2.2.0';
 // ---- The always-visible session bar ----
 // Staff must never be in any doubt about whose account is being played, so
 // this sits above everything until the session ends.
@@ -4620,6 +4620,7 @@ function renderBlocks() {
             <div class="content-editable" contenteditable="true" data-placeholder="Enter the answer..."
                  data-block-id="${block.id}" data-field="content"
                  oninput="saveBlockContent('${block.id}', 'content', this.innerHTML)">${block.content || ''}</div>
+            ${marksFieldHtml(block)}
             ${printLinesFieldHtml(block, 'in the answer box', block.content)}
           </div>
         `;
@@ -5418,6 +5419,29 @@ function printLinesFieldHtml(block, where, sample) {
       <span style="flex:1;min-width:220px;font-size:0.78rem;color:var(--text-muted);line-height:1.6;">Ruled lines students get ${where} on printed and PDF worksheets. Leave it on <b>Auto</b> and the box is sized from the model answer above — ${PRINT_ANSWER_LINES} lines for an ordinary answer, 1 for a number or a few words, more for a long one. This answer works out at <b>${auto}</b>.</span>
     </div>`;
 }
+// 分 — the marks the paper gives this answer, authored beside the model answer.
+//
+// It is the paper's own allocation, not a difficulty rating: 阅读理解 prints
+// （2分）against every question and the section is out of 22. Blank means "not
+// set", which scores exactly as this app always has — one point a part.
+function marksFieldHtml(block) {
+  const m = qaMarks(block);
+  return `
+    <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin:14px 0 2px;padding:12px 16px;border:1px dashed var(--border);border-radius:10px;background:var(--surface-alt,#fafbfa);">
+      <label style="font-size:0.85rem;font-weight:600;display:flex;align-items:center;gap:9px;white-space:nowrap;">💯 Marks 分
+        <input class="form-input" type="number" min="1" max="${QA_MARKS_MAX}" placeholder="—" style="width:82px;"
+               value="${m || ''}" oninput="setBlockMarks('${block.id}', this.value)"></label>
+      <span style="flex:1;min-width:220px;font-size:0.78rem;color:var(--text-muted);line-height:1.6;">What the paper gives this answer — the （2分）printed beside the question. The student sees it above the box, the marker is told how deep an answer ${m ? m + ' marks' : 'the marks'} asks for, and the score is out of the paper's total instead of one point a part. Leave it blank if the paper gives no marks.</span>
+    </div>`;
+}
+function setBlockMarks(id, value) {
+  const block = blocks.find(b => b.id === id);
+  if (!block) return;
+  const n = parseInt(value, 10);
+  if (!isFinite(n) || n < 1) { delete block.marks; return; }
+  block.marks = Math.min(QA_MARKS_MAX, n);
+}
+
 // Blank clears the override and puts the box back on Auto.
 function setPrintLines(id, value) {
   const block = blocks.find(b => b.id === id);
@@ -8998,10 +9022,18 @@ function buildBlocksFromAi(data) {
     if (Object.keys(evidence.blanks).length) selectedBlanks[id + '_evidence'] = evidence.blanks;
     if (Object.keys(reasoning.blanks).length) selectedBlanks[id + '_reasoning'] = reasoning.blanks;
   };
-  const pushPlain = (text) => {
+  // `marks` is the paper's own （2分）, and it is taken ONLY here — on the plain
+  // answer, which is one answer and one item. A Claim/Evidence/Reasoning block
+  // renders THREE items out of one block, so a mark allocation stamped on it
+  // would be charged three times over and the question would be out of 6分
+  // instead of 2.
+  const pushPlain = (text, marks) => {
     const id = generateBlockId();
     const { content, blanks } = _markedToBlanks(text || '');
-    blocks.push({ id, type: 'plainanswer', content });
+    const block = { id, type: 'plainanswer', content };
+    const m = qaMarks({ marks });
+    if (m) block.marks = m;
+    blocks.push(block);
     if (Object.keys(blanks).length) selectedBlanks[id] = blanks;
   };
 
@@ -9031,7 +9063,7 @@ function buildBlocksFromAi(data) {
       } else if (t === 'answer') {
         pushAnswer(b);
       } else if (t === 'plainanswer') {
-        pushPlain(b.text || b.answer || b.content);
+        pushPlain(b.text || b.answer || b.content, b.marks);
       } else if (t === 'explanation') {
         const expl = stripBrackets(b.text || b.content);
         if (expl) blocks.push({ id: generateBlockId(), type: 'explanation', content: expl });
@@ -9685,7 +9717,8 @@ function _aiBuildQuestionPrompt(isPdf, imageCount) {
     _rectangleRules() +
     `- If a text block lists labelled statements or answer options inline (e.g. "A: ...", "B: ...", "(1) ...", "(2) ..."), put EACH labelled item on its OWN line — separate them with a real line break ("\\n") so they do not run together in one paragraph.\n` +
     `- If questionType is "mcq": include exactly ONE "mcq" block. Copy each answer option verbatim into "options" WITHOUT its leading number/letter, and set "correctIndex" to the 0-based index of the correct option. Do NOT include "answer" or "plainanswer" blocks.\n` +
-    `- If questionType is "passage": include ONE "mcq" block PER numbered question — eight questions means eight "mcq" blocks — each carrying its own "part". Work each correct answer out from the passage and set "correctIndex"; if one genuinely cannot be answered from what is shown, omit "correctIndex" for that question rather than guessing at it. Do NOT include "answer" or "plainanswer" blocks.\n` +
+    `- If questionType is "passage" and the numbered questions GIVE OPTIONS to choose from: include ONE "mcq" block PER numbered question — eight questions means eight "mcq" blocks — each carrying its own "part". Work each correct answer out from the passage and set "correctIndex"; if one genuinely cannot be answered from what is shown, omit "correctIndex" for that question rather than guessing at it. Do NOT include "answer" or "plainanswer" blocks.\n` +
+    `- If questionType is "passage" and the numbered questions are ANSWERED IN WRITING (ruled boxes, 作答簿 lines, marks like （2分） and no options): follow the 阅读理解问答 rule below instead — a text block and a "plainanswer" block per question, both carrying that question's letter, and NO "mcq" blocks.\n` +
     `- If questionType is "open": include an answer block — use "answer" (Claim-Evidence-Reasoning) for a full explanation, or "plainanswer" for a short answer — one for a question with no parts, one per part for a question with parts. In these answer fields only, wrap each KEY key word a student should recall in [[double brackets]] (whole words, about 3 to 8 total). Do NOT bracket anything in text, options or explanation.\n` +
     `- An "explanation" block is 2-4 sentences a teacher would give a P3-P6 student explaining WHY the correct answer is correct — write it yourself if the source shows none, and never leave the question without one.\n` +
     _partsPromptRules() +
@@ -9722,6 +9755,9 @@ function _partsPromptRules() {
     `    {"type":"clozemcq","startNum":16,"intro":"根据短文的内容和上下文的意思，从括号中选出适当的词语。","passage":"课外活动是学生生活的一部分。……课外活动的种类非常丰富。{{}}是体育、艺术，还是团队活动……","blanks":[{"options":["总算","就算","不管","尽管"],"correctIndex":2}]}\n` +
     `  "passage" is the WHOLE passage transcribed exactly, with each blank replaced by the placeholder {{}} — put NOTHING else where the blank was: no number, no brackets, no options. "blanks" lists the choices in paper order, one entry per {{}}, in the same order. "startNum" is the number the paper gives the FIRST blank. Work out "correctIndex" (0-based) yourself from the passage; if you genuinely cannot, LEAVE IT OUT for that blank rather than guessing — a guessed answer marks a whole class against the wrong word.\n` +
     `  Do NOT use this for the OTHER cloze, the one with a single lettered word bank (A)–(Q) printed above the passage and no options at the blanks.\n` +
+    `- 阅读理解问答 (A PASSAGE ANSWERED IN WRITING) — a passage followed by numbered questions the student ANSWERS IN SENTENCES, with ruled boxes or 作答簿 lines instead of options ("B组（Q34—Q40，7题22分）根据短文和上下文的意思，回答问题"). It is ONE question, the same as any other passage. Transcribe the WHOLE passage into text blocks first, with NO "part". Then, for each numbered question in order: one "text" block carrying its letter ("part":"a") with the question wording, and directly under it one "plainanswer" block — carrying the SAME letter — holding the model answer you work out from the passage.\n` +
+    `- "marks": every answer block takes the marks the paper prints against that question — {"type":"plainanswer","part":"a","text":"…","marks":2} for （2分）. Where one question prints two allocations ("……？（1分）为什么？（3分）") give it the TOTAL, 4. The marks are what the answer is scored out of and how deep an answer the marker expects, so a question left without them is marked as though every question on the paper were worth the same.\n` +
+    `- Do NOT turn a written-answer question into an "mcq" block, and never invent options for it. If the paper gives the student ruled lines, the answer is written.\n` +
     `- Give EACH part its own answer block ("answer" or "plainanswer") directly under the text block that asks it, so every part has its own model answer.\n` +
     `- EXPLANATIONS follow the parts: a question with NO parts finishes with ONE "explanation" block; a question WITH parts gets ONE explanation block PER PART, placed directly after that part's own answer block and explaining ONLY that part's question and answer. Never write one explanation covering several parts, and never put an explanation about part (b) underneath part (a).\n`;
 }
@@ -14071,9 +14107,10 @@ function doPrintWorksheetOpen() {
           break;
         }
         case 'plainanswer': {
-          // Plain answer — blank writing box, sized from the model answer
+          // Plain answer — blank writing box, sized from the model answer, with
+          // the paper's own （2分）above it where the question carries marks.
           const paLines = openEndedLines(printAnswerLines(block, block.content));
-          qHtml += `<div class="print-open-answer-box"><div class="print-open-lines">${paLines}</div></div>`;
+          qHtml += qaPrintMarksHtml(block) + `<div class="print-open-answer-box"><div class="print-open-lines">${paLines}</div></div>`;
           _pushAnswerKeySection(qSections, null, block.content, bPart);
           break;
         }
@@ -19464,28 +19501,235 @@ function _qpTextHtml(part, content) {
 // repeating it over every answer area is noise that pushes the page down. It
 // still travels into items[].label, which is the name the AI marker uses to tell
 // one answer from another ("Part: [(a) Claim]").
+// 分 — the marks the paper gives this answer. The ONE place a block's mark
+// allocation is read, so the box on screen, the label, the printed paper and
+// the score all get the same number out of it.
+//
+// 0 means "not set", which is every question authored before 阅读理解问答
+// arrived and is scored exactly as it always was: one point a part. A weight of
+// 1 is therefore the default everywhere, never 0 — an answer worth no marks is
+// a part a student can never earn anything for.
+const QA_MARKS_MAX = 20;
+function qaMarks(block) {
+  const n = Number(block && block.marks);
+  return (isFinite(n) && n >= 1 && n <= QA_MARKS_MAX) ? Math.round(n) : 0;
+}
+function qaWeight(marks) {
+  const n = Number(marks);
+  return (isFinite(n) && n >= 1) ? n : 1;
+}
+// 一分 / 四分 as the paper prints it, for the chip beside the answer box.
+function qaMarksLabel(marks) { return marks ? `（${marks}分）` : ''; }
+// The same allocation on PAPER, printed above the ruled box. Both print
+// builders call this, so screen and paper cannot disagree about what a question
+// is worth — and a question with no marks prints exactly as it always did.
+function qaPrintMarksHtml(block) {
+  const m = qaMarks(block);
+  return m ? `<div class="print-qa-marks">${escapeHtml(qaMarksLabel(m))}</div>` : '';
+}
+
 function _openSection(items, label, modelAnswer, bg, fg, containerSel, source, part) {
   const oidx = items.length;
   // `block`/`field` let admins edit this part's model answer in place and write
   // it straight back to the question (see _adminAnsSave).
   const p = part ? String(part).trim() : '';
   const itemLabel = [p, label || (p ? 'Answer' : '')].filter(Boolean).join(' ') || 'Answer';
-  items.push({ label: itemLabel, model: modelAnswer || '', block: source && source.block, field: (source && source.field) || 'content' });
+  const marks = qaMarks(source && source.block);
+  items.push({ label: itemLabel, model: modelAnswer || '', marks, block: source && source.block, field: (source && source.field) || 'content' });
   // Escaped: every caller used to pass a hard-coded literal, but the label now
   // carries the question's own part marker, so it is author-influenced text.
   const labelHtml = label ? `<div class="cer-student-label" style="background:${bg};color:${fg};margin-bottom:6px;">${escapeHtml(label)}</div>` : '';
+  // A 4分 answer is a paragraph and a 1分 answer is a phrase. The paper gives
+  // each one its own depth of ruled box; so does the screen.
+  const rows = marks ? Math.min(10, 2 + marks) : 3;
+  const marksChip = marks
+    ? `<span class="qa-marks-chip" title="This part is worth ${marks} mark${marks === 1 ? '' : 's'}">${escapeHtml(qaMarksLabel(marks))}</span>`
+    : '';
   return `<div class="open-answer-section" data-mic-wrap style="margin-bottom:14px;">
       ${labelHtml}
       <div style="display:flex;gap:6px;align-items:flex-start;">
-        <textarea class="open-answer" data-oidx="${oidx}" rows="3" placeholder="Type or speak your answer..."
+        <textarea class="open-answer" data-oidx="${oidx}" rows="${rows}" placeholder="Type or speak your answer..."
           style="flex:1;min-width:0;padding:10px;border:1px solid var(--border);border-radius:8px;font-family:inherit;font-size:0.95rem;line-height:1.5;resize:vertical;background:#fff;color:var(--on-surface,#14161a);"></textarea>
         ${micButtonHtml('', 'Speak your answer')}
       </div>
+      ${marksChip ? `<div style="margin-top:4px;">${marksChip}</div>` : ''}
+      ${hwPadHtml(containerSel, oidx)}
       ${_partActionsHtml(containerSel, 'open', oidx)}
       ${_adminAnswerToolHtml(containerSel, oidx, modelAnswer || '')}
       <div class="open-feedback" style="margin-top:4px;"></div>
     </div>`;
 }
+
+// =====================================================================
+// ✍️ HANDWRITING — write the answer on the screen (`hw*`)
+//
+// A 华文 answer is Chinese characters, and a P3 student on an iPad writes them
+// far faster with a stylus than they type them, even with the 拼音 keyboard.
+// So every open answer box has a pad beside it: the same answer, written
+// instead of typed, and read by the SAME marker.
+//
+// - The ink is an ANSWER, not an annotation. The diagram pads (`_annot*`) mark
+//   a drawing against a model drawing; this is handwriting the marker reads as
+//   text, so it goes to the AI as one more image of the student's work — the
+//   photo route's image, made on the screen instead of with a camera.
+// - The strokes live ON THE ELEMENT, never in a map keyed by oidx: the same
+//   question can be on screen in two surfaces at once (practice and the
+//   worksheet preview), and a map keyed by index would have them share a pad.
+// - `touch-action:none` on the canvas is load-bearing on a tablet. Without it
+//   the first stroke scrolls the page instead of drawing, and the pad reads as
+//   broken.
+// =====================================================================
+const HW_LINE = 3;                 // ink width in CSS pixels — thick enough to survive the JPEG
+const HW_PAD_H = 168;              // one pad, tall enough for two lines of 汉字
+function hwPadHtml(containerSel, oidx) {
+  return `<div class="hw-wrap" data-hw="${oidx}" style="margin-top:6px;">
+      <button type="button" class="btn btn-outline hw-toggle" data-hw-toggle="${containerSel}" data-oidx="${oidx}"
+        style="padding:5px 12px;font-size:0.8rem;" title="Write your answer by hand — best with a stylus on a tablet">✍️ 手写 Write by hand</button>
+      <div class="hw-panel" data-hw-panel="${oidx}" style="display:none;margin-top:6px;">
+        <canvas class="hw-pad" data-hw-canvas="${oidx}" height="${HW_PAD_H}"
+          style="width:100%;height:${HW_PAD_H}px;border:1px solid var(--border);border-radius:8px;background:#fff;touch-action:none;cursor:crosshair;display:block;"></canvas>
+        <div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap;align-items:center;">
+          <button type="button" class="btn btn-outline" data-hw-undo="${containerSel}" data-oidx="${oidx}" style="padding:4px 10px;font-size:0.78rem;">⌫ Undo</button>
+          <button type="button" class="btn btn-outline" data-hw-clear="${containerSel}" data-oidx="${oidx}" style="padding:4px 10px;font-size:0.78rem;">✕ Clear</button>
+          <span style="font-size:0.78rem;color:var(--text-muted);">Write here and press ✓ Check answer — the AI reads your handwriting.</span>
+        </div>
+      </div>
+    </div>`;
+}
+function _hwCanvas(containerSel, oidx) {
+  return document.querySelector(containerSel + ' .hw-pad[data-hw-canvas="' + oidx + '"]');
+}
+// The canvas is sized in CSS and drawn in device pixels, or the ink is a blurry
+// smear on a retina screen and the marker has to read it.
+function _hwFit(cv) {
+  if (!cv) return;
+  const dpr = Math.min(3, window.devicePixelRatio || 1);
+  const w = Math.max(120, Math.round(cv.clientWidth || cv.parentElement.clientWidth || 320));
+  if (cv._hwW === w && cv._hwDpr === dpr) return;
+  cv._hwW = w; cv._hwDpr = dpr;
+  cv.width = Math.round(w * dpr);
+  cv.height = Math.round(HW_PAD_H * dpr);
+  _hwRedraw(cv);
+}
+function _hwRedraw(cv) {
+  if (!cv) return;
+  const ctx = cv.getContext('2d');
+  const dpr = cv._hwDpr || 1;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, cv.width, cv.height);
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, cv.width, cv.height);
+  ctx.strokeStyle = '#111827';
+  ctx.lineWidth = HW_LINE;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  (cv._hwStrokes || []).forEach(stroke => {
+    if (!stroke || stroke.length < 1) return;
+    ctx.beginPath();
+    ctx.moveTo(stroke[0].x, stroke[0].y);
+    if (stroke.length === 1) ctx.lineTo(stroke[0].x + 0.1, stroke[0].y);   // a dot is a stroke too
+    else stroke.slice(1).forEach(pt => ctx.lineTo(pt.x, pt.y));
+    ctx.stroke();
+  });
+}
+function _hwPoint(cv, e) {
+  const r = cv.getBoundingClientRect();
+  return { x: e.clientX - r.left, y: e.clientY - r.top };
+}
+function hwStart(cv, e) {
+  if (!cv || cv.dataset.locked === '1') return;
+  _hwFit(cv);
+  cv._hwStrokes = cv._hwStrokes || [];
+  cv._hwStrokes.push([_hwPoint(cv, e)]);
+  cv._hwDrawing = true;
+  try { cv.setPointerCapture(e.pointerId); } catch (_) {}
+  _hwRedraw(cv);
+}
+function hwMove(cv, e) {
+  if (!cv || !cv._hwDrawing) return;
+  const s = cv._hwStrokes[cv._hwStrokes.length - 1];
+  if (!s) return;
+  s.push(_hwPoint(cv, e));
+  _hwRedraw(cv);
+}
+function hwEnd(cv) { if (cv) cv._hwDrawing = false; }
+function hwUndo(containerSel, oidx) {
+  const cv = _hwCanvas(containerSel, oidx);
+  if (!cv || cv.dataset.locked === '1') return;
+  (cv._hwStrokes || []).pop();
+  _hwRedraw(cv);
+}
+function hwClear(containerSel, oidx) {
+  const cv = _hwCanvas(containerSel, oidx);
+  if (!cv) return;
+  cv._hwStrokes = [];
+  _hwRedraw(cv);
+}
+function hwToggle(containerSel, oidx, btn) {
+  const panel = document.querySelector(containerSel + ' .hw-panel[data-hw-panel="' + oidx + '"]');
+  if (!panel) return;
+  const on = panel.style.display === 'none';
+  panel.style.display = on ? '' : 'none';
+  if (btn) btn.innerHTML = on ? '⌨️ Type instead' : '✍️ 手写 Write by hand';
+  if (on) _hwFit(_hwCanvas(containerSel, oidx));
+}
+// Has this pad been written on, and what does it look like? `_hwInkPng` is the
+// ONE place ink becomes something the marker can read.
+function hwHasInk(containerSel, oidx) {
+  const cv = _hwCanvas(containerSel, oidx);
+  return !!(cv && (cv._hwStrokes || []).length);
+}
+function _hwInkPng(containerSel, oidx) {
+  const cv = _hwCanvas(containerSel, oidx);
+  if (!cv || !(cv._hwStrokes || []).length) return null;
+  try {
+    const url = cv.toDataURL('image/png');
+    const m = /^data:([^;]+);base64,(.*)$/.exec(url || '');
+    return m ? { mimeType: m[1], data: m[2] } : null;
+  } catch (e) { console.warn('handwriting export failed', e); return null; }
+}
+function hwLockIn(containerSel, on) {
+  document.querySelectorAll(containerSel + ' .hw-pad').forEach(cv => {
+    cv.dataset.locked = on ? '1' : '';
+    cv.style.cursor = on ? 'default' : 'crosshair';
+  });
+  document.querySelectorAll(containerSel + ' .hw-wrap button').forEach(b => { b.disabled = !!on; });
+}
+function hwClearIn(containerSel) {
+  document.querySelectorAll(containerSel + ' .hw-pad').forEach(cv => { cv._hwStrokes = []; cv.dataset.locked = ''; _hwRedraw(cv); });
+  document.querySelectorAll(containerSel + ' .hw-wrap button').forEach(b => { b.disabled = false; });
+}
+// ONE delegated set of listeners, bound once, because every answer box in the
+// app is built and rebuilt continuously — anything bound per pad covers the
+// pads that existed when it ran and silently misses every one made afterwards.
+document.addEventListener('pointerdown', e => {
+  const cv = e.target && e.target.closest && e.target.closest('.hw-pad');
+  if (cv) { e.preventDefault(); hwStart(cv, e); }
+});
+document.addEventListener('pointermove', e => {
+  const cv = e.target && e.target.closest && e.target.closest('.hw-pad');
+  if (cv && cv._hwDrawing) { e.preventDefault(); hwMove(cv, e); }
+});
+document.addEventListener('pointerup', e => {
+  const cv = e.target && e.target.closest && e.target.closest('.hw-pad');
+  if (cv) hwEnd(cv);
+});
+document.addEventListener('pointercancel', e => {
+  const cv = e.target && e.target.closest && e.target.closest('.hw-pad');
+  if (cv) hwEnd(cv);
+});
+document.addEventListener('click', e => {
+  const t = e.target && e.target.closest ? e.target.closest('[data-hw-toggle],[data-hw-undo],[data-hw-clear]') : null;
+  if (!t) return;
+  e.preventDefault();
+  const oidx = t.getAttribute('data-oidx');
+  if (t.hasAttribute('data-hw-toggle')) hwToggle(t.getAttribute('data-hw-toggle'), oidx, t);
+  else if (t.hasAttribute('data-hw-undo')) hwUndo(t.getAttribute('data-hw-undo'), oidx);
+  else hwClear(t.getAttribute('data-hw-clear'), oidx);
+});
+window.addEventListener('resize', () => {
+  document.querySelectorAll('.hw-pad').forEach(cv => { if (cv.clientWidth) _hwFit(cv); });
+});
 
 // =====================================================================
 // ADMIN: fix a part's model answer inline while practising. Admins can edit the
@@ -19863,7 +20107,7 @@ function buildOpenBody(q, containerSel, markCfg) {
   _openPartResults[containerSel] = {};
   _annotPadScores[containerSel] = {};
   _openFinalized[containerSel] = false;
-  _openPhoto[containerSel] = null; // fresh render — drop any previous photo
+  _openPhoto[containerSel] = [];   // fresh render — drop any pages attached to the last question
   if (annotCount) _scheduleAnnotInit(containerSel);
   return html;
 }
@@ -21696,19 +21940,37 @@ async function syAiAnswer(id, btn) {
 // PHOTO ANSWER — one photo of the whole page of written answers, sent to the
 // AI so it can read the handwriting and mark each open-ended section.
 // =====================================================================
-const _openPhoto = {}; // containerSel -> { dataUrl, mimeType, data, name }
+// containerSel -> [ { dataUrl, mimeType, data, name }, … ], in the order the
+// student added them.
+//
+// A LIST, not one photo (v2.2.0). A 阅读理解 answer sheet is two or three
+// sides of paper — Q34 to Q40 with a ruled box each — and a route that took one
+// photo made the student mark the page in instalments, or crop three sides into
+// one unreadable image. They go in one call, so the marker sees the whole
+// script at once and every part is marked together.
+const _openPhoto = {};
+const OPEN_PHOTO_MAX = 8;          // an answer script, not an album
 // Keep underscores: the file-input "change" handler rebuilds the container
 // selector as '#' + key, so the key must round-trip for ids like wsPreview_q_….
 function _openPhotoKey(containerSel) { return String(containerSel || '').replace(/[^a-z0-9_]/gi, ''); }
+// The ONE place the store is read as a list. Everything that marks, previews,
+// counts or clears asks it, so a surface that still writes a single object —
+// Snap & Mark hands one photo straight in — is read the same way as the pages
+// a student uploaded by hand.
+function _openPhotoList(containerSel) {
+  const v = _openPhoto[containerSel];
+  if (!v) return [];
+  return (Array.isArray(v) ? v : [v]).filter(p => p && p.data);
+}
 function openPhotoBarHtml(containerSel) {
   const key = _openPhotoKey(containerSel);
   return `<div class="open-photo-bar" style="margin:6px 0 14px;padding:10px 12px;border:1px dashed var(--border);border-radius:10px;background:var(--surface-alt,#fafbfa);">
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
-        <span style="font-size:0.85rem;color:var(--text-muted);">📸 Prefer writing on paper? Submit one photo of your whole page of answers and the AI will read and mark every part at once:</span>
+        <span style="font-size:0.85rem;color:var(--text-muted);">📸 Prefer writing on paper? Add a photo of every page of your answers — all of them are read and marked in one go:</span>
         <button type="button" class="btn btn-outline" style="padding:6px 12px;font-size:0.82rem;" data-openphoto-take="${containerSel}">📷 Take photo</button>
-        <button type="button" class="btn btn-outline" style="padding:6px 12px;font-size:0.82rem;" data-openphoto-upload="${containerSel}">🖼️ Upload photo</button>
+        <button type="button" class="btn btn-outline" style="padding:6px 12px;font-size:0.82rem;" data-openphoto-upload="${containerSel}">🖼️ Upload photos</button>
         <input type="file" accept="image/*" capture="environment" hidden id="openPhotoCam_${key}">
-        <input type="file" accept="image/*" hidden id="openPhotoFile_${key}">
+        <input type="file" accept="image/*" multiple hidden id="openPhotoFile_${key}">
       </div>
       <div class="open-photo-preview" id="openPhotoPrev_${key}" style="margin-top:10px;"></div>
     </div>`;
@@ -21717,26 +21979,45 @@ function renderOpenPhotoPreview(containerSel) {
   const key = _openPhotoKey(containerSel);
   const el = document.getElementById('openPhotoPrev_' + key);
   if (!el) return;
-  const p = _openPhoto[containerSel];
-  if (!p) { el.innerHTML = ''; return; }
+  const list = _openPhotoList(containerSel);
+  if (!list.length) { el.innerHTML = ''; return; }
+  // Numbered, because the marker is told the pages are in this order and a
+  // student who photographed page 2 first has to be able to see that.
+  const thumbs = list.map((p, i) => `<span style="position:relative;display:inline-block;">
+      <img src="${p.dataUrl}" style="width:82px;height:82px;object-fit:cover;border-radius:8px;border:1px solid var(--border);">
+      <span style="position:absolute;left:4px;top:4px;background:rgba(17,24,39,0.78);color:#fff;font-size:0.7rem;padding:1px 6px;border-radius:999px;">${i + 1}</span>
+      <button type="button" class="btn btn-outline" data-openphoto-remove="${containerSel}" data-idx="${i}" title="Remove this page"
+        style="position:absolute;right:2px;top:2px;padding:0 6px;font-size:0.72rem;line-height:1.5;background:#fff;">✕</button>
+    </span>`).join('');
   el.innerHTML = `<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
-      <img src="${p.dataUrl}" style="width:96px;height:96px;object-fit:cover;border-radius:8px;border:1px solid var(--border);">
-      <span style="font-size:0.82rem;color:var(--primary);">Photo attached — the AI can read it for a single part (✓ Check answer) or check the whole page:</span>
-      <button type="button" class="btn btn-check part-ai-btn" id="openPhotoMarkBtn_${key}" data-openphoto-markall="${containerSel}" style="padding:6px 14px;font-size:0.82rem;">✓ Check all parts from photo</button>
-      <button type="button" class="btn btn-outline" style="padding:4px 10px;font-size:0.8rem;" data-openphoto-remove="${containerSel}">Remove</button>
+      ${thumbs}
+      <span style="font-size:0.82rem;color:var(--primary);flex-basis:100%;">${list.length} page${list.length === 1 ? '' : 's'} attached — the AI can read them for a single part (✓ Check answer) or mark the whole script:</span>
+      <button type="button" class="btn btn-check part-ai-btn" id="openPhotoMarkBtn_${key}" data-openphoto-markall="${containerSel}" style="padding:6px 14px;font-size:0.82rem;">✓ Check all parts from ${list.length === 1 ? 'photo' : 'photos'}</button>
+      <button type="button" class="btn btn-outline" style="padding:4px 10px;font-size:0.8rem;" data-openphoto-remove="${containerSel}" data-idx="all">Remove all</button>
     </div>`;
 }
 async function attachOpenPhoto(containerSel, file) {
   if (!file) return;
   if (!file.type || !file.type.startsWith('image/')) { showToast('Please choose an image', 'error'); return; }
   if (file.size > 18 * 1024 * 1024) { showToast('Image too large (max 18 MB)', 'error'); return; }
+  const list = _openPhotoList(containerSel);
+  if (list.length >= OPEN_PHOTO_MAX) { showToast(`That is already ${OPEN_PHOTO_MAX} pages — mark these first`, 'info'); return; }
   try {
     const dataUrl = await new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(String(r.result || '')); r.onerror = () => rej(new Error('could not read the image')); r.readAsDataURL(file); });
     const m = /^data:([^;,]+)[^,]*,(.*)$/.exec(dataUrl);
-    _openPhoto[containerSel] = { dataUrl, mimeType: (m && m[1]) || file.type || 'image/jpeg', data: (m && m[2]) || '', name: file.name || 'answer photo' };
+    _openPhoto[containerSel] = list.concat([{ dataUrl, mimeType: (m && m[1]) || file.type || 'image/jpeg', data: (m && m[2]) || '', name: file.name || 'answer photo' }]);
     renderOpenPhotoPreview(containerSel);
-    showToast('Answer photo attached ✓', 'success');
   } catch (e) { showToast('Could not attach photo: ' + (e && e.message ? e.message : e), 'error'); }
+}
+// Several files chosen at once are attached IN ORDER and announced once. One
+// toast per page would bury the screen on a three-page script.
+async function attachOpenPhotos(containerSel, files) {
+  const list = Array.from(files || []);
+  if (!list.length) return;
+  const before = _openPhotoList(containerSel).length;
+  for (const f of list) await attachOpenPhoto(containerSel, f);
+  const added = _openPhotoList(containerSel).length - before;
+  if (added > 0) showToast(`${added} answer page${added === 1 ? '' : 's'} attached ✓`, 'success');
 }
 document.addEventListener('click', function (e) {
   const take = e.target.closest && e.target.closest('[data-openphoto-take]');
@@ -21744,7 +22025,15 @@ document.addEventListener('click', function (e) {
   const up = e.target.closest && e.target.closest('[data-openphoto-upload]');
   if (up) { e.preventDefault(); const i = document.getElementById('openPhotoFile_' + _openPhotoKey(up.getAttribute('data-openphoto-upload'))); if (i) i.click(); return; }
   const rm = e.target.closest && e.target.closest('[data-openphoto-remove]');
-  if (rm) { e.preventDefault(); const cs = rm.getAttribute('data-openphoto-remove'); _openPhoto[cs] = null; renderOpenPhotoPreview(cs); return; }
+  if (rm) {
+    e.preventDefault();
+    const cs = rm.getAttribute('data-openphoto-remove');
+    const idx = rm.getAttribute('data-idx');
+    if (idx === 'all' || idx == null) _openPhoto[cs] = [];
+    else _openPhoto[cs] = _openPhotoList(cs).filter((p, i) => i !== parseInt(idx, 10));
+    renderOpenPhotoPreview(cs);
+    return;
+  }
   const pm = e.target.closest && e.target.closest('[data-openphoto-markall]');
   if (pm) { e.preventDefault(); markAllPartsFromPhoto(pm.getAttribute('data-openphoto-markall')); return; }
   const mk = e.target.closest && e.target.closest('[data-part-mark]');
@@ -21756,10 +22045,56 @@ document.addEventListener('change', function (e) {
   const t = e.target;
   if (!t || t.tagName !== 'INPUT' || t.type !== 'file' || !/^openPhoto(Cam|File)_/.test(t.id || '')) return;
   const containerSel = '#' + t.id.replace(/^openPhoto(Cam|File)_/, '');
-  const file = t.files && t.files[0];
-  if (file) attachOpenPhoto(containerSel, file);
+  if (t.files && t.files.length) attachOpenPhotos(containerSel, t.files);
   t.value = '';
 });
+
+// =====================================================================
+// What the marker actually SEES of the student's work.
+//
+// The ONE place the images going to a marking call are assembled and described,
+// so `markOpenAnswersIn` (the whole question) and `markQuestionPart` (one part)
+// cannot disagree about what image 3 is. Get that wrong and the marker reads
+// one part's handwriting as another's — a wrong mark, on a screen that looks
+// exactly right.
+//
+// The order is fixed: the photographed pages first, in the order the student
+// added them, then one image per handwriting pad that has ink on it. The note
+// tells the model what each image is, by number.
+// =====================================================================
+function _openAnswerMedia(containerSel, opts = {}) {
+  const onlyOidx = (opts.oidx == null) ? null : String(opts.oidx);
+  const wantInk = opts.inks !== false;
+  const items = _openItemsStore[containerSel] || [];
+  const media = [];
+  const lines = [];
+  _openPhotoList(containerSel).forEach(p => {
+    media.push({ mimeType: p.mimeType, data: p.data });
+    lines.push(`Image ${media.length}: page ${media.length} of the student's written answer script.`);
+  });
+  const pageCount = media.length;
+  // A multiple-choice part asks for the pages only: an option is circled on the
+  // paper, never handwritten on another part's pad.
+  const pads = wantInk ? Array.from(document.querySelectorAll(containerSel + ' .hw-pad')) : [];
+  pads.forEach(cv => {
+    const oidx = cv.getAttribute('data-hw-canvas');
+    if (onlyOidx != null && oidx !== onlyOidx) return;
+    const ink = _hwInkPng(containerSel, oidx);
+    if (!ink) return;
+    media.push(ink);
+    const label = (items[parseInt(oidx, 10)] || {}).label || 'Answer';
+    lines.push(`Image ${media.length}: the student's HANDWRITTEN answer for item ${oidx} [${label}], written on screen.`);
+  });
+  if (!media.length) return { media: [], note: '', pageCount: 0, inkCount: 0 };
+  const note =
+    `The student did not type every answer. ${media.length} image${media.length === 1 ? ' is' : 's are'} attached, in this order:\n` +
+    lines.join('\n') + '\n' +
+    (pageCount
+      ? `Read the photographed page${pageCount === 1 ? '' : 's'} carefully and find the student's answer for EACH item below, matching by its label and the order the items are numbered on the page. For a multiple-choice item, work out which option the student chose (a circled option, a written number, or a tick).\n`
+      : '') +
+    `Ignore handwriting quality entirely — mark what the student wrote, not how neatly. If an item has no answer anywhere in the images and none typed, mark it incorrect with feedback saying it was left blank.\n`;
+  return { media, note, pageCount, inkCount: media.length - pageCount };
+}
 
 function renderOpenPracticeBody(q) {
   return buildOpenBody(q, '#practiceContainer', {
@@ -21832,6 +22167,9 @@ function renderPracticeQuestion(q, student) {
 
 function resetOpenAnswersIn(containerSel, scoreElId) {
   document.querySelectorAll(containerSel + ' .open-answer').forEach(_openAnswerClear);
+  // The handwriting goes with the typed answers. Ink left on a pad through a
+  // reset is last attempt's answer, sitting there ready to be marked again.
+  hwClearIn(containerSel);
   document.querySelectorAll(containerSel + ' .fb-input').forEach(a => { a.value = ''; a.disabled = false; a.style.borderColor = 'var(--border)'; a.style.background = '#fff'; });
   document.querySelectorAll(containerSel + ' .open-feedback, ' + containerSel + ' .mcq-feedback, ' + containerSel + ' .fb-feedback').forEach(fb => { fb.innerHTML = ''; });
   document.querySelectorAll(containerSel + ' .part-hint-box').forEach(h => { h.style.display = 'none'; h.innerHTML = ''; });
@@ -22234,7 +22572,9 @@ async function markOpenAnswersIn(containerSel, q, opts = {}) {
   const scoreEl = scoreElId ? document.getElementById(scoreElId) : null;
   const btn = btnId ? document.getElementById(btnId) : null;
   const ctx = q ? _questionContext(q) : '';
-  const photo = _openPhoto[containerSel];
+  // Photographed pages and on-screen handwriting, in one described list.
+  const shot = _openAnswerMedia(containerSel);
+  const photo = shot.media.length ? shot : null;
 
   // Reset visuals
   areas.forEach(a => {
@@ -22251,7 +22591,7 @@ async function markOpenAnswersIn(containerSel, q, opts = {}) {
     const it = items[parseInt(a.dataset.oidx)] || { label: 'Answer', model: '' };
     // _openAnswerText, not a.value: a synthesis answer whose OPENING was given
     // on the paper has that opening printed beside the box, not typed into it.
-    entries.push({ kind: 'open', label: it.label, model: it.model, rubric: it.rubric || '', student: _openAnswerText(a), areaEl: a });
+    entries.push({ kind: 'open', label: it.label, model: it.model, marks: it.marks || 0, rubric: it.rubric || '', student: _openAnswerText(a), areaEl: a });
   });
   mcqList.forEach(m => {
     const checked = document.querySelector(containerSel + ' input[name="mcq_' + m.blockId + '"]:checked');
@@ -22268,7 +22608,10 @@ async function markOpenAnswersIn(containerSel, q, opts = {}) {
   const aiEntries = [];
   entries.forEach((e, i) => {
     if (e.kind === 'open') aiEntries.push({ e, i });
-    else if (e.kind === 'mcq' && photo && !e.studentLetter) aiEntries.push({ e, i });
+    // Only a photographed PAGE can hold an unmade multiple-choice, and only
+    // then is it worth an AI call: a handwriting pad belongs to one open part
+    // and never carries another part's circled option.
+    else if (e.kind === 'mcq' && shot.pageCount && !e.studentLetter) aiEntries.push({ e, i });
   });
   const needAi = aiEntries.length > 0;
   if (needAi && (!window.__aiReady || !window.__aiReady())) {
@@ -22279,7 +22622,7 @@ async function markOpenAnswersIn(containerSel, q, opts = {}) {
   const byI = {};
   // Deterministic marking for on-screen multiple-choice (no AI needed).
   entries.forEach((e, i) => {
-    if (e.kind === 'mcq' && !(photo && !e.studentLetter)) {
+    if (e.kind === 'mcq' && !(shot.pageCount && !e.studentLetter)) {
       const correctOpt = e.mcq.options.find(o => o.correct);
       const ok = !!(e.studentLetter && correctOpt && e.studentLetter === correctOpt.letter);
       byI[i] = { i: i, verdict: ok ? 'correct' : 'incorrect', chosen: e.studentLetter };
@@ -22295,7 +22638,11 @@ async function markOpenAnswersIn(containerSel, q, opts = {}) {
     try {
       const list = aiEntries.map(({ e, i }) => {
         if (e.kind === 'open') {
-          return `${i}. [${e.label}] type=open${e.rubric ? ' rubric="' + e.rubric.replace(/"/g, "'") + '"' : ''} expected="${e.model}" student="${e.student || (photo ? '(see attached photo)' : '(blank)')}"`;
+          // The marks are the paper's own allocation, and they change what
+          // "correct" means: a 4分 answer wants the reasons as well as the
+          // point, and a 1分 answer is a phrase. Sent so the model marks to the
+          // depth the question asks for rather than to its own idea of full.
+          return `${i}. [${e.label}] type=open${e.marks ? ' marks=' + e.marks : ''}${e.rubric ? ' rubric="' + e.rubric.replace(/"/g, "'") + '"' : ''} expected="${e.model}" student="${e.student || (photo ? '(written by hand — see the attached images)' : '(blank)')}"`;
         }
         const opts = e.mcq.options.map(o => `${o.letter}) ${o.text}`).join(' | ');
         const correct = e.mcq.options.find(o => o.correct);
@@ -22305,19 +22652,21 @@ async function markOpenAnswersIn(containerSel, q, opts = {}) {
         `You are a Chinese teacher marking a student's answers. ` +
         `${_markingPreamble(q && q.markingGuide, q && q.topic)}\n` +
         `Question context: "${ctx}".\n` +
-        (photo
-          ? `The student wrote their answers on paper and attached ONE photo of the whole page. Read the photo carefully and find the student's answer for EACH item below, matching by its label and order. For a multiple-choice item, work out which option number the student chose (a circled option, a written number or letter, or a tick) from the photo when they have not selected one on screen. Ignore handwriting quality.\n`
-          : ``) +
+        (photo ? photo.note : ``) +
         `For each OPEN item, compare the student's answer to the expected model answer by meaning (ignore wording, grammar and spelling — focus on the meaning); verdict "correct", "partial" or "incorrect". ` +
+        `An item carrying marks=N is worth N marks on the paper: mark "correct" only when the answer covers what N marks asks for, "partial" when it gives part of it. ` +
         `An item carrying rubric="…" is marked BY THAT RUBRIC INSTEAD — it says what correct means for that item, and it overrides the sentence above for that item only. ` +
         `For each MULTIPLE-CHOICE item, decide which option the student chose and mark "correct" only if it matches the correct option number, otherwise "incorrect"; also include "chosen":"<the option number the student picked, or empty>". ` +
         `Give ONE short feedback sentence (max 22 words) addressed to the student for each item. ` +
         `Provide the full correct MODEL ANSWER for the whole question as "modelAnswer" — the ideal answer a student should give (use the expected answers if provided, otherwise generate the correct answer yourself; for multiple choice state the correct option and what it says). ` +
         `Also write a clear overall EXPLANATION (2-4 sentences) addressed to "you" that is SPECIFIC to the answer the student actually gave: explain WHY their answer was marked correct, partial or incorrect — quote or refer to what they wrote, say what they got right, what was missing or wrong, and what a full-mark answer needs. Do NOT just restate the model answer or describe the question in the abstract. ` +
-        `Return ONLY JSON: {"items":[{"i":0,"verdict":"correct","feedback":"...","chosen":"B"}],"modelAnswer":"...","explanation":"..."}.\n${list}`;
+        (photo
+          ? `For every item you answered from an image, also return "read": the student's answer TRANSCRIBED exactly as they wrote it, in Simplified Chinese. It is shown back to them so they can see what was read — a mark against a misread answer must be visible, not silent.\n`
+          : ``) +
+        `Return ONLY JSON: {"items":[{"i":0,"verdict":"correct","feedback":"...","chosen":"B","read":"..."}],"modelAnswer":"...","explanation":"..."}.\n${list}`;
       let raw;
-      if (photo && photo.data) {
-        raw = await askGeminiVision(prompt, [{ mimeType: photo.mimeType, data: photo.data }], { maxOutputTokens: 1100 + aiEntries.length * 220, json: true });
+      if (photo && photo.media.length) {
+        raw = await askGeminiVision(prompt, photo.media, { maxOutputTokens: 1100 + aiEntries.length * 220, json: true });
       } else {
         raw = await askGemini(prompt, { maxOutputTokens: 1100 + aiEntries.length * 220, temperature: 0.2, json: true });
       }
@@ -22335,29 +22684,42 @@ async function markOpenAnswersIn(containerSel, q, opts = {}) {
     if (btn) { btn.disabled = false; btn.innerHTML = orig; }
   }
 
-  let score = 0;
+  let score = 0, weightTotal = 0;
   const mistakes = [];
   entries.forEach((e, i) => {
     const v = byI[i];
     const verdict = v ? String(v.verdict || '').toLowerCase() : 'incorrect';
     e.verdict = verdict;
-    const pts = verdict === 'correct' ? 1 : verdict === 'partial' ? 0.5 : 0;
+    // Weighted by the paper's own marks, so a 4分 question is worth four times
+    // a 1分 one — and 1 for everything that carries none, which is every
+    // question authored before 分 existed and every MCQ. That default is what
+    // keeps the score of an old question exactly what it always was.
+    const w = qaWeight(e.marks);
+    const pts = verdict === 'correct' ? w : verdict === 'partial' ? w / 2 : 0;
     score += pts;
+    weightTotal += w;
     const color = verdict === 'correct' ? 'var(--primary)' : verdict === 'partial' ? 'var(--accent-orange)' : 'var(--accent-red)';
     const icon = verdict === 'correct' ? '✓' : verdict === 'partial' ? '≈' : '✗';
     const fbHead = `<span style="color:${color};font-weight:600;font-size:0.85rem;text-transform:capitalize;">${icon} ${escapeHtml(verdict)}</span>` +
       `<span style="color:var(--text-muted);font-size:0.85rem;"> — ${escapeHtml(v && v.feedback ? v.feedback : '')}</span>`;
     if (e.kind === 'open') {
+      // What the marker READ, when the answer was written rather than typed.
+      // Shown back to the student, and used as their answer everywhere an
+      // answer is recorded — a photographed script would otherwise reach the
+      // mistake log and the learning-gap list as a blank.
+      const readBack = (!e.student && v && v.read) ? String(v.read).trim() : '';
+      if (readBack) e.student = readBack;
       if (verdict !== 'correct') mistakes.push({ expected: e.model, student: e.student });
       _openAnswerPaint(e.areaEl, color);
       const sec = e.areaEl.closest('.open-answer-section');
       const fb = sec && sec.querySelector('.open-feedback');
       if (fb) {
         let inner = fbHead;
+        if (readBack) inner += `<div style="margin-top:4px;font-size:0.82rem;color:var(--text-muted);"><strong>Read from your writing:</strong> ${escapeHtml(readBack)}</div>`;
         if (verdict !== 'correct' && e.model) inner += `<div style="margin-top:4px;font-size:0.82rem;color:var(--primary);"><strong>Model answer:</strong> ${escapeHtml(e.model)}</div>`;
         fb.innerHTML = inner;
       }
-      _setPartResult(containerSel, 'open:' + (e.areaEl.dataset.oidx || ''), verdict, pts, e.model, e.student);
+      _setPartResult(containerSel, 'open:' + (e.areaEl.dataset.oidx || ''), verdict, pts, e.model, e.student, qaWeight(e.marks));
     } else {
       const m = e.mcq;
       const correctOpt = m.options.find(o => o.correct);
@@ -22375,7 +22737,10 @@ async function markOpenAnswersIn(containerSel, q, opts = {}) {
     }
   });
 
-  const total = entries.length;
+  // The total is the paper's marks when the question carries them, and the
+  // number of parts when it does not — qaWeight(0) is 1, so the two are the
+  // same number for every question authored before 分 existed.
+  const total = weightTotal;
   if (scoreEl) {
     const pct = total ? Math.round((score / total) * 100) : 0;
     scoreEl.textContent = `${scorePrefix}: ${score}/${total} (${pct}%)`;
@@ -22447,8 +22812,20 @@ async function markOpenAnswersIn(containerSel, q, opts = {}) {
 // PER-PART AI MARKING + HINTS — every answer box / MCQ gets its own
 // "✓ Check answer" and "💡 Hint" buttons instead of one big per-question button.
 // =====================================================================
-function _setPartResult(containerSel, key, verdict, pts, expected, student) {
-  (_openPartResults[containerSel] = _openPartResults[containerSel] || {})[key] = { verdict, pts, expected, student };
+// `w` is what this part is out of — the paper's 分 for an answer that carries
+// them, 1 otherwise. Stored beside the points so the running score and the
+// final total are worked out from the same number, whichever path marked it.
+function _setPartResult(containerSel, key, verdict, pts, expected, student, w) {
+  (_openPartResults[containerSel] = _openPartResults[containerSel] || {})[key] = { verdict, pts, expected, student, w: qaWeight(w) };
+}
+// What the whole question is out of, part by part: the marks an open answer
+// carries, one for everything else. Read from the ITEM store rather than from
+// the results, so the denominator is the same before and after marking — a
+// total that grows as parts are marked reads as the score jumping about.
+function _openTotalWeight(containerSel) {
+  const items = _openItemsStore[containerSel] || [];
+  const mcqs = _openMcqStore[containerSel] || [];
+  return items.reduce((s, it) => s + qaWeight(it && it.marks), 0) + mcqs.length;
 }
 
 // Once a part is marked, refresh the running score; when EVERY part of the
@@ -22457,6 +22834,10 @@ function _setPartResult(containerSel, key, verdict, pts, expected, student) {
 function _checkAllPartsMarked(containerSel) {
   const totalParts = (_openItemsStore[containerSel] || []).length + (_openMcqStore[containerSel] || []).length;
   if (!totalParts) return;
+  // How many PARTS are marked is the progress line; what the question is out of
+  // is its MARKS. On a 阅读理解 of 22分 those are two different numbers, and
+  // showing one where the other belongs reads as a marking bug.
+  const totalMarks = _openTotalWeight(containerSel);
   const results = _openPartResults[containerSel] || {};
   const marked = Object.keys(results).length;
   const cfg = _openSurfaceCfg[containerSel] || {};
@@ -22481,7 +22862,7 @@ function _checkAllPartsMarked(containerSel) {
     }
     return;
   }
-  const finalScore = score + padAgg.s, finalTotal = totalParts + padAgg.t;
+  const finalScore = score + padAgg.s, finalTotal = totalMarks + padAgg.t;
   if (scoreEl) {
     const pct = Math.round((finalScore / (finalTotal || 1)) * 100);
     scoreEl.textContent = `${cfg.scorePrefix || 'AI Score'}: ${finalScore}/${finalTotal} (${pct}%)`;
@@ -22556,10 +22937,14 @@ async function _genAndShowExplanation(containerSel, q, results, scoreElId) {
 async function markQuestionPart(containerSel, kind, pid, btn) {
   const q = _openQStore[containerSel];
   const ctx = q ? _questionContext(q) : '';
-  const photo = _openPhoto[containerSel];
+  // This part's own handwriting, plus every photographed page — a page can hold
+  // any part's answer, but one pad is one part's, so sending another part's ink
+  // is sending the marker the wrong answer to mark.
+  const shot = _openAnswerMedia(containerSel, kind === 'open' ? { oidx: pid } : { inks: false });
+  const photo = shot.media.length ? shot : null;
 
   let areaEl = null, fbEl = null, mcq = null, correctOpt = null;
-  let label = 'Answer', model = '', student = '', studentLetter = '', rubric = '';
+  let label = 'Answer', model = '', student = '', studentLetter = '', rubric = '', marks = 0;
   if (kind === 'open') {
     areaEl = document.querySelector(containerSel + ' .open-answer[data-oidx="' + pid + '"]');
     if (!areaEl) return;
@@ -22567,8 +22952,9 @@ async function markQuestionPart(containerSel, kind, pid, btn) {
     label = it.label || 'Answer';
     model = it.model || '';
     rubric = it.rubric || '';
+    marks = it.marks || 0;
     student = _openAnswerText(areaEl);
-    if (!student && !photo) { showToast('Type an answer for this part first — or attach a photo of your written work', 'info'); return; }
+    if (!student && !photo) { showToast('Type or write an answer for this part first — or attach a photo of your written work', 'info'); return; }
     const sec = areaEl.closest('.open-answer-section');
     fbEl = sec && sec.querySelector('.open-feedback');
   } else {
@@ -22612,7 +22998,7 @@ async function markQuestionPart(containerSel, kind, pid, btn) {
   try {
     let item;
     if (kind === 'open') {
-      item = `Part: [${label}] type=open${rubric ? ' rubric="' + rubric.replace(/"/g, "'") + '"' : ''} expected="${model || '(none provided — work out the correct answer from the question context)'}" student="${student || '(see attached photo)'}"`;
+      item = `Part: [${label}] type=open${marks ? ' marks=' + marks : ''}${rubric ? ' rubric="' + rubric.replace(/"/g, "'") + '"' : ''} expected="${model || '(none provided — work out the correct answer from the question context)'}" student="${student || '(written by hand — see the attached images)'}"`;
     } else {
       const optsTxt = mcq.options.map(o => `${o.letter}) ${o.text}`).join(' | ');
       item = `Part: [Multiple choice] type=mcq options=[${optsTxt}] correct=${correctOpt ? correctOpt.letter : '?'} studentSelected="${studentLetter || '(read from photo)'}"`;
@@ -22621,19 +23007,21 @@ async function markQuestionPart(containerSel, kind, pid, btn) {
       `You are a Chinese teacher marking ONE part of a student's answer to a question. ` +
       `${_markingPreamble(q && q.markingGuide, q && q.topic)}\n` +
       `Question context: "${ctx}".\n` +
-      (photo
-        ? `The student wrote their answers on paper and attached ONE photo of the whole page. Find the student's answer for THIS part in the photo, matching by its label and order${kind === 'mcq' ? ' (a circled option, a written number or letter, or a tick)' : ''}. Ignore handwriting quality.\n`
-        : ``) +
+      (photo ? photo.note : ``) +
       (kind === 'open'
         ? `Compare the student's answer to the expected model answer by meaning (ignore wording, grammar and spelling — focus on the meaning); verdict "correct", "partial" or "incorrect". `
+          + `If the part carries marks=N it is worth N marks on the paper: mark "correct" only when the answer covers what N marks asks for, "partial" when it gives part of it. `
           + `If the part carries rubric="…", mark it BY THAT RUBRIC instead — it says what correct means here and it overrides the sentence above. `
         : `Decide which option the student chose and mark "correct" only if it matches the correct option number, otherwise "incorrect"; also include "chosen":"<the option number the student picked, or empty>". `) +
       `Give ONE short feedback sentence (max 22 words) addressed to the student. ` +
       `Provide the full correct answer for THIS part as "modelAnswer"${kind === 'mcq' ? ' (state the correct option number and what it says)' : ' (use the expected answer if provided, otherwise generate the correct answer yourself)'}. ` +
-      `Return ONLY JSON: {"verdict":"correct","feedback":"...","modelAnswer":"..."${kind === 'mcq' ? ',"chosen":"2"' : ''}}.\n${item}`;
+      (photo && kind === 'open'
+        ? `If you answered from an image, also return "read": the student's answer TRANSCRIBED exactly as they wrote it, in Simplified Chinese, so they can see what was read.\n`
+        : ``) +
+      `Return ONLY JSON: {"verdict":"correct","feedback":"...","modelAnswer":"..."${kind === 'mcq' ? ',"chosen":"2"' : ',"read":"..."'}}.\n${item}`;
     let raw;
-    if (photo && photo.data) {
-      raw = await askGeminiVision(prompt, [{ mimeType: photo.mimeType, data: photo.data }], { maxOutputTokens: 500, json: true });
+    if (photo && photo.media.length) {
+      raw = await askGeminiVision(prompt, photo.media, { maxOutputTokens: 500, json: true });
     } else {
       raw = await askGemini(prompt, { maxOutputTokens: 500, temperature: 0.2, json: true });
     }
@@ -22648,7 +23036,11 @@ async function markQuestionPart(containerSel, kind, pid, btn) {
 
   const v = String(parsed.verdict || '').toLowerCase();
   const verdict = v === 'correct' ? 'correct' : v === 'partial' ? 'partial' : 'incorrect';
-  const pts = verdict === 'correct' ? 1 : verdict === 'partial' ? 0.5 : 0;
+  // The same weighting the whole-question path uses — a part marked on its own
+  // must be worth what it is worth there, or the score changes with the button
+  // the student happened to press.
+  const w = qaWeight(marks);
+  const pts = verdict === 'correct' ? w : verdict === 'partial' ? w / 2 : 0;
   const color = verdict === 'correct' ? 'var(--primary)' : verdict === 'partial' ? 'var(--accent-orange)' : 'var(--accent-red)';
   const icon = verdict === 'correct' ? '✓' : verdict === 'partial' ? '≈' : '✗';
   const fbHead = `<span style="color:${color};font-weight:600;font-size:0.85rem;text-transform:capitalize;">${icon} ${escapeHtml(verdict)}</span>` +
@@ -22657,12 +23049,18 @@ async function markQuestionPart(containerSel, kind, pid, btn) {
   if (kind === 'open') {
     _openAnswerPaint(areaEl, color);
     const modelShown = model || String(parsed.modelAnswer || '').trim();
+    // What the marker read, when the answer was written rather than typed —
+    // shown back, and recorded as the student's answer so a handwritten attempt
+    // does not reach the mistake log as a blank. See markOpenAnswersIn.
+    const readBack = (!student && parsed.read) ? String(parsed.read).trim() : '';
+    if (readBack) student = readBack;
     if (fbEl) {
       let inner = fbHead;
+      if (readBack) inner += `<div style="margin-top:4px;font-size:0.82rem;color:var(--text-muted);"><strong>Read from your writing:</strong> ${escapeHtml(readBack)}</div>`;
       if (modelShown) inner += `<div style="margin-top:4px;font-size:0.82rem;color:var(--primary);"><strong>Model answer:</strong> ${escapeHtml(modelShown)}</div>`;
       fbEl.innerHTML = inner;
     }
-    _setPartResult(containerSel, 'open:' + pid, verdict, pts, model, student);
+    _setPartResult(containerSel, 'open:' + pid, verdict, pts, model, student, w);
   } else {
     const chosenLetter = parsed.chosen ? _normMcqChoice(parsed.chosen) : studentLetter;
     _mcqPaintResult(containerSel, pid, mcq.options, chosenLetter);
@@ -22718,10 +23116,12 @@ async function hintQuestionPart(containerSel, kind, pid, btn) {
   if (btn) { btn.disabled = false; btn.innerHTML = orig; }
 }
 
-// Whole-page marking for the photo flow: one photo covers every part, so it is
-// still marked in a single AI call, then handed to the surface's completion hook.
+// Whole-script marking for the photo flow: every page the student attached goes
+// into ONE AI call — a 阅读理解 answer sheet runs to two or three sides and they
+// are marked together — then the result is handed to the surface's completion
+// hook exactly as a typed attempt is.
 async function markAllPartsFromPhoto(containerSel) {
-  if (!_openPhoto[containerSel]) { showToast('Attach a photo of your answers first', 'info'); return; }
+  if (!_openPhotoList(containerSel).length) { showToast('Attach a photo of your answers first', 'info'); return; }
   const cfg = _openSurfaceCfg[containerSel] || {};
   const alreadyFinalized = !!_openFinalized[containerSel];
   const res = await markOpenAnswersIn(containerSel, _openQStore[containerSel], {
@@ -23081,7 +23481,7 @@ async function snapMarkQuestion(q, photoIdx) {
   if (!many) setSnapStatus('', false);
   if (i === 0) { try { host.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch (e) {} }
   // Attach THIS photo to this result section, then auto-mark every part.
-  _openPhoto[sel] = Object.assign({}, photo);
+  _openPhoto[sel] = [Object.assign({}, photo)];   // the store is a LIST — see _openPhotoList
   renderOpenPhotoPreview(sel);
   const res = await markAllPartsFromPhoto(sel);
   _snapRecordItem(i, {
@@ -24058,7 +24458,7 @@ function buildWorksheetHtml(selected, worksheetTitle, opts) {
             break;
           }
           case 'plainanswer': {
-            qHtml += `<div class="print-open-answer-box"><div class="print-open-lines">${openEndedLines(printAnswerLines(block, block.content))}</div></div>`;
+            qHtml += qaPrintMarksHtml(block) + `<div class="print-open-answer-box"><div class="print-open-lines">${openEndedLines(printAnswerLines(block, block.content))}</div></div>`;
             _pushAnswerKeySection(qSections, null, block.content, bPart);
             break;
           }
@@ -25954,6 +26354,7 @@ function _qpAllPartsMarked(res) {
   if (qpSubmitted) return;
   qpSubmitted = true;
   document.querySelectorAll('#qpContainer .open-answer').forEach(a => _openAnswerLock(a, true));
+  hwLockIn('#qpContainer', true);   // a handwritten answer locks with the typed ones
   document.querySelectorAll('#qpContainer .part-ai-btn').forEach(b => b.disabled = true);
   _recordQpResult(res.score, res.total, res.mistakes);
   qpAnswered = Math.max(qpAnswered, qpIndex + 1);
@@ -28344,6 +28745,7 @@ function _tpAllPartsMarked(res) {
   if (tpSubmitted) return;
   tpSubmitted = true;
   document.querySelectorAll('#tpContainer .open-answer').forEach(a => _openAnswerLock(a, true));
+  hwLockIn('#tpContainer', true);   // a handwritten answer locks with the typed ones
   document.querySelectorAll('#tpContainer .part-ai-btn').forEach(b => b.disabled = true);
   _recordTpResult(res.score, res.total, res.mistakes);
   tpAnswered = Math.max(tpAnswered, tpIndex + 1);
@@ -37094,6 +37496,7 @@ window.widgetGenerate = widgetGenerate;
 window.widgetIterate = widgetIterate;
 window.widgetClear = widgetClear;
 window.setPrintLines = setPrintLines;
+window.setBlockMarks = setBlockMarks;   // the 💯 Marks 分 field's oninput
 window.toggleWorkingAnnotate = toggleWorkingAnnotate;
 // Student Home screen actions
 window.homeContinuePractice = homeContinuePractice;

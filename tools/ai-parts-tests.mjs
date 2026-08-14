@@ -52,6 +52,8 @@ const section = [
   // The real 画线 normaliser, not a stub: the builder's text branch runs every
   // block through it, and a text block is what most of these cases are.
   cut('function _aiUnderline(text)', '\n// The "tags" instruction', 'underline'),
+  // …and the real 分 reader, which the plain-answer branch runs through.
+  cut('const QA_MARKS_MAX =', 'function qaWeight(', 'marks'),
   // The handful of leaf helpers the builder leans on, reduced to their contract.
   `
 let _n = 0;

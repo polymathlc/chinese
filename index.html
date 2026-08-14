@@ -2151,6 +2151,23 @@ option {
   padding: 12px 14px;
   line-height: 1.8;
 }
+/* 分 — what the paper gives this answer, shown above the box the student
+   writes in so they can see how much the question is asking for. */
+.qa-marks-chip {
+  display: inline-block;
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--primary);
+  background: var(--primary-light, #e8f5ef);
+  border-radius: 999px;
+  padding: 3px 12px;
+  letter-spacing: 0.02em;
+}
+/* ✍️ Handwriting pad — the answer written on screen instead of typed.
+   touch-action:none is set inline on the canvas as well: without it the first
+   stroke on a tablet scrolls the page instead of drawing. */
+.hw-wrap .hw-pad { -webkit-user-select: none; user-select: none; }
+.hw-wrap .hw-panel { max-width: 100%; }
 .sv-block-tag {
   font-family: 'Space Mono', monospace;
   font-size: 0.6rem;
@@ -3410,6 +3427,16 @@ option {
     padding: 6pt;
     position: relative;
     page-break-inside: avoid;
+  }
+  /* The paper prints （2分）against the question; so does the worksheet. It sits
+     with the box it belongs to, never at the end of the question wording, so a
+     page break can never put the marks on one sheet and the box on the next. */
+  .print-qa-marks {
+    font-size: 9pt;
+    text-align: right;
+    color: #444;
+    margin: 2pt 0 0 0;
+    page-break-after: avoid;
   }
   .print-open-answer-box .print-open-lines {
     width: 100%;
