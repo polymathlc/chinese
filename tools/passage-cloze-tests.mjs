@@ -166,8 +166,70 @@ test('a wrapped option keeps its tail', () => {
 
 test('"16 (3) x" is a wrapped line, not a new question', () => {
   eq(M._pbQStart('16 (3) something'), null);
-  eq(M._pbQStart('16'), { n: 16, first: null });
-  eq(M._pbQStart('16 (1) Originated'), { n: 16, first: 'Originated' });
+  eq(M._pbQStart('16'), { n: 16, first: null, text: '', announced: false });
+  eq(M._pbQStart('16 (1) Originated'), { n: 16, first: 'Originated', text: '', announced: false });
+});
+
+// ── 阅读理解: a passage, then questions that carry their own WORDING ─────────
+// The other shape a 华文 paper sets: "Q21 为什么作者的父亲没时间管他？" and four
+// options under it in FULL-WIDTH brackets. Read with the ASCII-only rules the
+// whole page parses as one long passage with no questions in it at all — and
+// the builder says "Nothing to add yet", which reads as a paste that failed.
+
+test('a full-width option list is an option list', () => {
+  eq(M._pbQStart('（1） 作者的父亲赚的钱不多。'), null, 'an option was read as question 1');
+  const p = M._pbParse('短文。\nQ21 为什么作者的父亲没时间管他？\n（1） 赚的钱不多。\n（2） 工作时间长。');
+  eq(p.subs.length, 1);
+  eq(p.subs[0].options, ['赚的钱不多。', '工作时间长。']);
+});
+
+test('the question keeps its wording and loses the paper\'s number', () => {
+  const p = M._pbParse('短文。\nQ21 为什么作者的父亲没时间管他？\n（1） 甲\n（2） 乙');
+  eq(p.subs[0].n, 21, 'the number is still known — the answer key is matched by it');
+  eq(p.subs[0].text, '为什么作者的父亲没时间管他？', 'the wording is dropped or keeps its Q21');
+});
+
+test('a question whose wording wraps keeps the tail', () => {
+  const p = M._pbParse('短文。\nQ22 邻居总是对父亲说：“你儿子可真‘厉害’！”\n是因为______\n（1） 甲\n（2） 乙');
+  eq(p.subs[0].text, '邻居总是对父亲说：“你儿子可真‘厉害’！” 是因为______');
+  eq(p.subs[0].options.length, 2, 'the wrapped wording was counted as an option');
+});
+
+test('every numbering the paper prints opens a question', () => {
+  ['Q21 为什么？', '第21题 为什么？', '21. 为什么？', '21、为什么？', '（21）为什么？'].forEach(line => {
+    const q = M._pbQStart(line);
+    ok(q && q.n === 21, 'not read as question 21: ' + line + ' → ' + JSON.stringify(q));
+    ok(q.text.indexOf('为什么') === 0, 'the wording was lost: ' + JSON.stringify(q));
+  });
+  eq(M._pbQStart('２１. 为什么？').n, 21, 'full-width digits are digits');
+});
+
+test('a quantity at the head of a line is still prose', () => {
+  // The guard the bare-number rule has always had, in both widths.
+  eq(M._pbQStart('2.5公斤的冰块放进水里。'), null, '"2.5公斤" opened question 2');
+  eq(M._pbQStart('20,000只动物，1,000个品种。'), null, 'a comma is not a separator');
+});
+
+test('the passage is everything before the first question', () => {
+  const p = M._pbParse('我小时候家境贫穷。\n父亲每天工作到很晚。\nQ21 为什么？\n（1） 甲\n（2） 乙');
+  eq(p.passage, '我小时候家境贫穷。\n父亲每天工作到很晚。');
+});
+
+test('the wording opens the part and the options inherit it', () => {
+  // Labelled twice the paper reads "(a) 为什么… (a) （1）甲", which looks like a
+  // printing fault — qPartLabelFirst exists for exactly this.
+  const p = M._pbParse('短文。\nQ21 为什么？\n（1） 甲\n（2） 乙\nQ22 什么时候？\n（1） 丙\n（2） 丁');
+  const out = M.pbBuildBlocks(p, '');
+  const parts = out.filter(b => b.part).map(b => b.type + ':' + b.part);
+  eq(parts, ['text:a', 'text:b'], 'the wording is what opens each part');
+  eq(out.filter(b => b.type === 'mcq').every(b => !b.part), true, 'an mcq under its own wording must not re-open the part');
+});
+
+test('a wording-less paper still letters the options themselves', () => {
+  // The English-style set — a number and four options, no question wording.
+  const p = M._pbParse('Passage.\n16\n(1) a\n(2) b\n17\n(1) c\n(2) d');
+  const out = M.pbBuildBlocks(p, '');
+  eq(out.filter(b => b.type === 'mcq').map(b => b.part), ['a', 'b'], 'nothing else opens the part here');
 });
 
 test('a question with fewer than two options is dropped', () => {

@@ -355,18 +355,41 @@ manual escape hatch, for an author who does want the paper's numbering.
 
 ### 📑 The passage builder (`pb*`)
 
-Paste the passage and the option lists as they are on the paper; out comes one
-text block plus one MCQ per sub-question, each opening its own lettered part.
+Paste the passage and the questions as they are on the paper; out comes one text
+block for the passage plus, per sub-question, its wording and its MCQ — each
+sub-question opening its own lettered part. Both shapes a 华文 paper sets are
+read: a question that is nothing but a number and its four choices, and a
+阅读理解 question that carries its own wording.
 
 - **The parse is deterministic — there is no AI in it.** A wrong guess here is
   not a wrong answer, it is four options quietly filed under the wrong number.
 - A question opens on a **bare** number at the start of a line; an option number
   is **parenthesised and single-digit**. That one rule is what stops the "(16)"
   markers inside the passage reading as options, and stops "20,000 animals
-  across 1,000 species" reading as question 20.
-- A line that is neither **continues the option above it** — an option long
-  enough to wrap arrives as two lines, and dropping the tail loses half the
-  answer with nothing looking wrong.
+  across 1,000 species" reading as question 20. **`_pbQStart` refuses anything
+  `PB_OPT_RE` matches**, and the parse tests options FIRST — otherwise
+  "（1）作者的父亲赚的钱不多。" opens question 1 with the option as its wording,
+  and every option list becomes four questions.
+- **阅读理解 questions carry their own WORDING** (v2.3.0) — "Q21 为什么作者的
+  父亲没时间管他？" — and the number **announces itself**: `Q21`, `第21题`,
+  `21.`, `21、`, `（21）`. That announcement is what lets the wording form exist
+  at all; a bare number followed by text stays prose, or the quantity rule above
+  is undone. A `Q` needs no other proof and splits the passage on its own,
+  because a 阅读理解 question's wording often wraps before its options begin.
+- **Everything is half- OR full-width.** A 华文 paper prints `（1）`, not `(1)`,
+  and `ZH_PROMPT_RULES` asks every model to keep the paper's punctuation exactly
+  as printed — so an ASCII-only parser reads a whole 阅读理解 as one long
+  passage with no questions in it, and the builder says "Nothing to add yet",
+  which reads as a paste that failed. `_pbNum` is the one place a full-width
+  digit becomes a number.
+- A line that is neither **continues what came last** — an option long enough to
+  wrap, or the question's own wording, which runs to two lines often enough that
+  dropping the tail would lose half the question with nothing looking wrong.
+- **The WORDING opens the part and the options inherit it.** `pbBuildBlocks`
+  gives the MCQ a part only when there is no wording block above it: a part
+  opened twice files the wording under (a) and the options under (a) again, and
+  the key prints two (a) rows. `qPartLabelFirst` is what stops the paper reading
+  "(a) 为什么… (a) （1）作者的父亲…".
 - **An unticked sub-question is saved with no correct option.** Guessing one
   marks every class that ever sits it against the wrong word.
 
@@ -476,6 +499,32 @@ nothing saying which four belong to which blank.
 - **Both print builders carry an explicit `case 'clozemcq'`** — one step worse
   than `fillblank`'s reason: the read-only rendering paints the correct option
   green, so falling through to it prints a worksheet with every answer circled.
+- **On SCREEN each blank is a DROP-DOWN** (`.cm-pick`, v2.3.0); on PAPER the
+  four choices still print inline in their brackets, exactly as the paper sets
+  them. They differ on purpose: five blanks × four choices is eighty characters
+  of options threaded through the prose, and on a phone the sentence the student
+  is supposed to be reading for meaning disappears into it. `cmPrintHtml` is
+  untouched.
+  - **`_cmOptionsHtml` is the ONE place a blank's list is built**, and every
+    option keeps the PAPER's number — `（3）不管` — because the marking scheme
+    answers "16 (3)" and a list of bare words leaves the student unable to check
+    their work against a key.
+  - **The empty choice is `value="-1"`, never `""`.** `Number('')` is 0, which
+    is option (1): an unanswered blank would be marked against a word the
+    student never picked.
+  - **The choice is READ OFF the `<select>`** (`_cmPicked`), never kept in a map
+    beside it — a parallel list of picks is one change away from disagreeing
+    with the passage on screen.
+  - **Marking DISABLES the selects.** A `<select>` ignores the `cm-locked`
+    class, so without that the student can still change an answer after the
+    passage has been scored.
+  - `appearance:auto` on `.cm-pick` is **not optional** — Tailwind's preflight
+    sets it to `none`, which takes the arrow off and leaves something that does
+    not read as a control (the same trap as a bare checkbox).
+  - The correct word is shown **at the blank it belongs to** (`.cm-ans`), not
+    only in the list under the passage: five blanks down, a student reading
+    "16 (3) 解决" at the bottom has to count blanks back up to find which one it
+    was.
 - Run **`node tools/clozemcq-tests.mjs`** after touching any of it.
 
 ## How many questions is a page? (v2.1.0)
@@ -1131,7 +1180,10 @@ reported in chat, to know whether the deploy actually went through.
   - `node tools/clozemcq-tests.mjs` — 短文填空: which option each blank is keyed
     to, that an unticked blank is never given an invented answer, that the
     printed worksheet gives none of them away, and that the key numbers from the
-    PAPER's first number (16) rather than from 1.
+    PAPER's first number (16) rather than from 1. Also the student's drop-down —
+    an empty choice worth `""` reads as option (1) and marks an unanswered blank
+    against a word nobody picked, and a drop-down nothing listens to renders,
+    opens and records nothing at all.
   - `node tools/word-help-tests.mjs` — which OPTION each of the model's answers
     is about. Line them up wrong and the popout still opens, still looks right
     and still reads fluently, while telling a child that "reluctantly" cannot be
@@ -1147,8 +1199,9 @@ reported in chat, to know whether the deploy actually went through.
   - `node tools/passage-cloze-tests.mjs` — the passage builder's parse, the
     cloze's word bank, and the part lettering both rest on. A passage split
     one line early swallows the first option list; a question number read off a
-    quantity cuts the passage in half; a bank that does not contain one of its
-    own answers renders and prints perfectly and is unanswerable.
+    quantity cuts the passage in half; a full-width `（1）` read as a question
+    turns every option list into four questions; a bank that does not contain
+    one of its own answers renders and prints perfectly and is unanswerable.
   - `node tools/rapid-split-tests.mjs` — how many questions a page holds, and
     the full-width numbering strip that guards it. Split a 短文填空 and its
     blanks lose the passage they are about; fail to split a 语文应用 page of

@@ -172,45 +172,47 @@
 
 /* ---- 📝 短文填空 — one passage, options in brackets at every blank ---------
    Set the way the paper sets it: the instruction, then the passage running
-   straight on with each blank's number and its four choices in full-width
-   brackets, inline. Unlike the word-bank cloze above there is no bank and no
-   rule to fill — the choices ARE the blank, so nothing is positioned and the
+   straight on with each blank's number and a DROP-DOWN holding that blank's
+   four choices. Unlike the word-bank cloze above there is no bank and no rule
+   to fill — the choices belong to the blank, so nothing is positioned and the
    passage keeps an ordinary reading line-height.
 
-   .cm-opts is inline-flex with wrap so a bracketed group breaks tidily at the
-   end of a line instead of pushing the whole group down and leaving a hole. */
+   The paper prints the four choices inline in full-width brackets and so does
+   the printed worksheet; the SCREEN collapses them into the drop-down, because
+   a passage of five blanks read on a phone is otherwise more options than
+   prose. Screen and paper differ here on purpose. */
   .cm-intro { font-size:0.9rem; line-height:1.7; margin-bottom:16px; }
   .cm-passage { font-size:0.98rem; line-height:2.5; text-align:justify; }
-  .cm-blank { display:inline; }
+  .cm-blank { display:inline; white-space:nowrap; }
   .cm-num { display:inline-block; min-width:1.5em; font-weight:800; font-size:0.9rem; margin:0 2px; }
-  .cm-opts { display:inline-flex; flex-wrap:wrap; align-items:baseline; }
-  .cm-opt {
-    display:inline-flex; align-items:baseline; gap:3px;
-    padding:2px 8px; margin:1px 1px; border:1px solid transparent; border-radius:8px;
-    background:transparent;
-    /* A <button> does not inherit colour — without this every option is the
-       browser's default button text, invisible on a dark surface. */
-    color:var(--text,#14161a);
+  /* The blank is a DROP-DOWN (v2.3.0). The options used to print inline in
+     their brackets, as the paper sets them; on a five-blank passage that is
+     eighty characters of choices threaded through the prose, and the sentence
+     the student is meant to be reading for meaning disappears into it. The
+     PRINTED worksheet still sets them the paper's way — cmPrintHtml.
+
+     appearance:auto is NOT optional: Tailwind's preflight sets it to none,
+     which takes the arrow off and leaves something that does not read as a
+     control at all. Same trap as a bare checkbox. */
+  .cm-pick {
+    appearance:auto; -webkit-appearance:auto;
+    max-width:min(15em, 60vw);
+    padding:2px 6px; margin:0 2px;
+    border:1px solid var(--accent-blue,#2d6ca8); border-radius:8px;
+    background:var(--surface,#fff); color:var(--text,#14161a);
     font-family:inherit; font-size:0.95rem; line-height:1.6; cursor:pointer;
-    transition:background .12s ease, border-color .12s ease;
+    vertical-align:baseline;
   }
-  .cm-opt i { font-style:normal; font-size:0.76rem; color:var(--text-muted); }
-  .cm-opt:hover { background:var(--accent-blue-light,#eaf1f8); }
-  .cm-opt.on { background:var(--accent-blue,#2d6ca8); border-color:var(--accent-blue,#2d6ca8); color:#fff; }
-  .cm-opt.on i { color:rgba(255,255,255,0.75); }
-  .cm-opt:focus-visible { outline:2px solid var(--accent-blue,#2d6ca8); outline-offset:2px; }
-  /* After marking: the answer is always shown, the student's wrong pick is
-     shown as wrong. Both, because "you were wrong" without "this was right"
-     teaches nothing. */
-  .cm-opt.is-right { background:#dcfce7; border-color:#16a34a; color:#14532d; }
-  .cm-opt.is-right i { color:#16a34a; }
-  .cm-opt.is-wrong { background:#fee2e2; border-color:#dc2626; color:#7f1d1d; text-decoration:line-through; }
-  .cm-opt.is-wrong i { color:#dc2626; }
-  .cm-locked .cm-opt { cursor:default; }
-  .cm-locked .cm-opt:hover { background:transparent; }
-  .cm-locked .cm-opt.on:hover { background:var(--accent-blue,#2d6ca8); }
-  .cm-locked .cm-opt.is-right:hover { background:#dcfce7; }
-  .cm-locked .cm-opt.is-wrong:hover { background:#fee2e2; }
+  .cm-pick:focus-visible { outline:2px solid var(--accent-blue,#2d6ca8); outline-offset:2px; }
+  .cm-blank.done .cm-pick { background:var(--accent-blue-light,#eaf1f8); font-weight:600; }
+  .cm-blank.right .cm-pick { border-color:#16a34a; background:#dcfce7; color:#14532d; }
+  .cm-blank.wrong .cm-pick { border-color:#dc2626; background:#fee2e2; color:#7f1d1d; }
+  .cm-pick:disabled { opacity:1; cursor:default; }
+  /* After marking, the right answer stands beside the blank it belongs to —
+     "you were wrong" without "this was right" teaches nothing, and a list at
+     the bottom of the passage makes the student count blanks back up to find
+     which one it was. */
+  .cm-ans { color:#16a34a; font-weight:700; font-size:0.9rem; margin-left:4px; }
   .cm-blank.right .cm-num { color:#16a34a; }
   .cm-blank.wrong .cm-num { color:#dc2626; }
   .cm-blank.unkeyed .cm-num { color:var(--text-muted); opacity:0.6; }
@@ -304,6 +306,9 @@
   .pb-row.over { opacity:0.5; }
   .pb-row.over .pb-row-n { color:var(--accent-red,#b23b36); }
   .pb-row-opts { flex:1; display:flex; flex-direction:column; gap:4px; min-width:0; }
+  /* A 阅读理解 question carries its own wording, and the author has to be able
+     to see WHICH question they are ticking an option for. */
+  .pb-row-q { font-size:0.88rem; line-height:1.65; font-weight:600; margin-bottom:4px; }
   .pb-opt { display:flex; gap:9px; align-items:flex-start; padding:5px 9px; border:1px solid transparent; border-radius:8px; font-size:0.87rem; line-height:1.5; cursor:pointer; }
   .pb-opt:hover { background:var(--surface,#fff); }
   .pb-opt.on { background:#dcfce7; border-color:#16a34a; }
@@ -8471,28 +8476,35 @@ body.zhime-field .zhime-pill, .zhime-pill.on { display: inline-flex; }
   <div class="confirm-dialog pb-dialog">
     <h3 style="margin-bottom:6px;">📑 Passage + sub-questions</h3>
     <p style="color:var(--text-muted);font-size:0.85rem;line-height:1.7;margin-bottom:22px;">
-      Paste the passage and the option lists exactly as they are on the paper. Everything before the
-      first question number is the passage; each list below it becomes a <b>part</b>, lettered
+      Paste the passage and the questions exactly as they are on the paper. Everything before the
+      first question is the passage; each question below it becomes a <b>part</b>, lettered
       <b>(a) (b) (c)</b> in order. The paper's own numbers are dropped — a bank question stands on its
       own — and any <b>(16)</b> markers inside the passage are renumbered to match, so the passage and
       its questions stay tied together. Wrap a word in <code>__double underscores__</code> to underline it.
     </p>
+    <p style="color:var(--text-muted);font-size:0.85rem;line-height:1.7;margin-bottom:22px;">
+      Both shapes a 华文 paper sets are read: a question that is nothing but a number and its four
+      choices (<b>16</b> then <b>（1）（2）（3）（4）</b>), and a 阅读理解 question that carries its own
+      wording (<b>Q21 为什么作者的父亲没时间管他？</b> then its four choices). Full-width brackets,
+      <b>Q21</b>, <b>21.</b>, <b>21、</b> and <b>（21）</b> all count, and a question whose wording runs
+      onto a second line keeps it.
+    </p>
 
     <label class="pb-label" for="pbIntro">Instruction line <span>— optional, printed above the passage</span></label>
-    <input class="form-input" id="pbIntro" type="text" placeholder="For each question from 16 to 20, choose the word closest in meaning to the underlined word(s).">
+    <input class="form-input" id="pbIntro" type="text" placeholder="根据短文的内容和上下文的意思，选出适当的答案。">
 
-    <label class="pb-label" for="pbInput" style="margin-top:16px;">Passage, then the option lists</label>
-    <textarea class="form-input pb-input" id="pbInput" rows="12" oninput="pbSync()" placeholder="As a student, I find the POSB Smart Buddy programme helpful. __Rolled out__ (16) in 2017, it is now expanding to all schools in Singapore.
+    <label class="pb-label" for="pbInput" style="margin-top:16px;">Passage, then the questions</label>
+    <textarea class="form-input pb-input" id="pbInput" rows="12" oninput="pbSync()" placeholder="我小时候家境贫穷，父亲为了赚钱养家，每天都工作到很晚才回来，根本没时间管我。
 
-16   (1) Originated
-     (2) Embarked
-     (3) Launched
-     (4) Founded
+Q21 为什么作者的父亲没时间管他？
+（1） 作者的父亲赚的钱不多。
+（2） 父亲工作的时间非常长。
+（3） 作者从不听父亲的教导。
+（4） 父亲不懂得如何教作者。
 
-17   (1) advanced
-     (2) creative
-     (3) efficient
-     (4) flexible"></textarea>
+Q22 邻居总是对父亲说：“你儿子可真‘厉害’！”是因为______
+（1） 作者常常犯错不听话。
+（2） 作者总是被老师责骂。"></textarea>
 
     <label class="pb-label" for="pbKey" style="margin-top:16px;">Answer key <span>— optional. “3 3 2 2 4”, or “16-3 17-3 18-2”.</span></label>
     <div class="pb-key-row">

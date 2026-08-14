@@ -1817,7 +1817,7 @@ async function enterApp(user) {
 
 // App version shown to admins in the sidebar. BUMP THIS on every change you
 // deploy (see CLAUDE.md) so the admin can confirm the latest build is live.
-const APP_VERSION = 'v2.2.0';
+const APP_VERSION = 'v2.3.0';
 // ---- The always-visible session bar ----
 // Staff must never be in any doubt about whose account is being played, so
 // this sits above everything until the session ends.
@@ -13447,17 +13447,49 @@ function autoNumberPartsFromInput() {
 //  • A line that is neither continues the option above it, because an option
 //    long enough to wrap arrives as two lines and dropping the tail loses half
 //    the answer without anything looking wrong.
-const PB_QLINE_RE = /^\s*(\d{1,3})\s*[.)]?\s*(?:\(\s*([1-9])\s*\)\s*(.*))?$/;
-const PB_OPT_RE = /^\s*\(\s*([1-9])\s*\)\s*(.+?)\s*$/;
+//  • A 阅读理解 question also carries its own WORDING — "Q21 为什么作者的父亲没
+//    时间管他？" — and its number ANNOUNCES itself: Q21, 21., 21、, （21）. That
+//    announcement is what lets the wording form exist at all. A bare number
+//    followed by text stays what it always was — prose — or "20,000 animals
+//    across 1,000 species" opens question 20 and cuts the passage in half.
+//  • Everything is half- or full-width. A 华文 paper prints （1）, not (1), and
+//    ZH_PROMPT_RULES asks every model to keep the paper's punctuation exactly
+//    as printed — so a parser that knows only ASCII reads a whole 阅读理解 as
+//    one long passage with no questions in it.
+const PB_QLINE_RE = /^\s*([0-9０-９]{1,3})\s*[.)．)]?\s*(?:[(（]\s*([1-9１-９])\s*[)）]\s*(.*))?$/;
+const PB_OPT_RE = /^\s*[(（]\s*([1-9１-９])\s*[)）]\s*(.+?)\s*$/;
+// "Q21 为什么…" / "第21题 …" — a letter in front of the number, which no line of
+// prose has, so this opener needs no other proof.
+const PB_QMARK_RE = /^\s*(?:Q|Ｑ|第)\s*([0-9０-９]{1,3})\s*(?:题)?\s*[.、．:：)）]?\s*(.*)$/;
+// "21. …" / "21、…" / "（21）…" — a number and a REAL separator. The lookahead is
+// load-bearing: without it "2.5公斤的冰" opens question 2.
+const PB_QSEP_RE = /^\s*[(（]?\s*([0-9０-９]{1,3})\s*[)）.、．:：](?![0-9０-９])\s*(.*)$/;
 const PB_MAX_OPTS = 9;
-// A question opener: a bare number on its own, or a number carrying option (1).
+// Full-width digits are digits. ２１ is question 21, and read as NaN it is no
+// question at all.
+function _pbNum(s) {
+  return parseInt(String(s == null ? '' : s).replace(/[０-９]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0)), 10);
+}
+// A question opener: a bare number on its own, a number carrying option (1), or
+// a number that announces itself and carries the question's wording.
 // A number followed by any OTHER option number is a wrapped line, not an opener.
 function _pbQStart(line) {
-  const m = String(line == null ? '' : line).match(PB_QLINE_RE);
-  if (!m) return null;
-  if (m[2] == null) return { n: parseInt(m[1], 10), first: null };
-  if (m[2] !== '1') return null;
-  return { n: parseInt(m[1], 10), first: (m[3] || '').trim() };
+  const s = String(line == null ? '' : line);
+  // A parenthesised SINGLE digit is an option, whatever else it looks like.
+  // Without this "（1） 作者的父亲赚的钱不多。" reads as question 1 with the
+  // option as its wording, and every option list becomes four questions.
+  if (PB_OPT_RE.test(s)) return null;
+  const m = s.match(PB_QLINE_RE);
+  if (m) {
+    if (m[2] == null) return { n: _pbNum(m[1]), first: null, text: '', announced: false };
+    if (_pbNum(m[2]) !== 1) return null;
+    return { n: _pbNum(m[1]), first: (m[3] || '').trim(), text: '', announced: false };
+  }
+  const q = s.match(PB_QMARK_RE);
+  if (q) return { n: _pbNum(q[1]), first: null, text: (q[2] || '').trim(), announced: true };
+  const d = s.match(PB_QSEP_RE);
+  if (d) return { n: _pbNum(d[1]), first: null, text: (d[2] || '').trim(), announced: false };
+  return null;
 }
 function _pbParse(raw) {
   const lines = String(raw == null ? '' : raw).replace(/\r\n?/g, '\n').split('\n');
@@ -13468,7 +13500,10 @@ function _pbParse(raw) {
   for (let i = 0; i < lines.length; i++) {
     const q = _pbQStart(lines[i]);
     if (!q) continue;
-    if (q.first != null) { split = i; break; }
+    // A Q in front of the number is proof on its own — no line of prose opens
+    // "Q21" — and it has to be, because a 阅读理解 question's wording often
+    // wraps onto a second line before its options begin.
+    if (q.first != null || q.announced) { split = i; break; }
     for (let j = i + 1; j < lines.length; j++) {
       const t = lines[j].trim();
       if (!t) continue;
@@ -13482,20 +13517,28 @@ function _pbParse(raw) {
   if (split >= 0) {
     let cur = null;
     lines.slice(split).forEach(line => {
-      const q = _pbQStart(line);
-      if (q) {
-        cur = { n: q.n, options: [], correct: -1 };
-        subs.push(cur);
-        if (q.first) cur.options.push(q.first);
-        return;
-      }
+      // Options are tested FIRST: a parenthesised single digit is an option
+      // wherever it appears, and _pbQStart refuses one for the same reason.
       const o = line.match(PB_OPT_RE);
       if (o && cur) {
         if (cur.options.length < PB_MAX_OPTS) cur.options.push(o[2]);
         return;
       }
+      const q = _pbQStart(line);
+      if (q) {
+        cur = { n: q.n, text: q.text || '', options: [], correct: -1 };
+        subs.push(cur);
+        if (q.first) cur.options.push(q.first);
+        return;
+      }
       const t = line.trim();
-      if (t && cur && cur.options.length) cur.options[cur.options.length - 1] += ' ' + t;
+      if (!t || !cur) return;
+      // A line that is neither continues whatever came last — an option long
+      // enough to wrap, or the question's own wording, which on a 阅读理解 runs
+      // to two lines often enough that dropping the tail would lose half the
+      // question with nothing looking wrong.
+      if (cur.options.length) cur.options[cur.options.length - 1] += ' ' + t;
+      else cur.text = (cur.text ? cur.text + ' ' : '') + t;
     });
   }
   return { passage, subs: subs.filter(s => s.options.length >= 2) };
@@ -13569,13 +13612,24 @@ function pbBuildBlocks(parsed, intro) {
     // sub-question is dropped and the author is told, which is the only honest
     // outcome (see pbInsert).
     if (!letter) return;
+    // A 阅读理解 question has WORDING of its own — "为什么作者的父亲没时间管他？"
+    // — and it opens the part; the options inherit it. Labelling both would
+    // print "(a) 为什么… (a) （1）作者的父亲…", which reads as a printing fault,
+    // and qPartLabelFirst is what stops it. The paper's own Q21 is NOT kept:
+    // a bank question stands on its own.
+    if (sub.text) {
+      out.push(Object.assign(createBlock('text'), { content: _pbPassageHtml(sub.text), part: letter }));
+    }
     const b = createBlock('mcq');
     b.options = sub.options.map(t => ({ id: generateBlockId(), text: t }));
     // An unpicked answer stays unpicked. Guessing one would put a tick against
     // an option nobody chose, and the question would mark every class that ever
     // sat it against the wrong word.
     b.correctId = (sub.correct >= 0 && b.options[sub.correct]) ? b.options[sub.correct].id : null;
-    b.part = letter;
+    // The options open the part only when nothing else did. A part opened twice
+    // is a part opened twice: qPartMap would file the wording under (a) and the
+    // options under (a) again, and the answer key would carry two (a) rows.
+    if (!sub.text) b.part = letter;
     out.push(b);
   });
   return out;
@@ -13646,6 +13700,7 @@ function pbRender() {
     <div class="pb-row${pbPartLetter(i) ? '' : ' over'}">
       <div class="pb-row-n">${pbPartLetter(i) ? '(' + pbPartLetter(i) + ')' : '—'}<span class="pb-row-was">was ${s.n}</span></div>
       <div class="pb-row-opts">
+        ${s.text ? `<div class="pb-row-q">${escapeHtml(s.text)}</div>` : ''}
         ${s.options.map((o, i) => `
           <label class="pb-opt${s.correct === i ? ' on' : ''}">
             <input type="radio" name="pbc_${s.n}" ${s.correct === i ? 'checked' : ''} onchange="pbSetCorrect(${s.n},${i})">
@@ -20855,10 +20910,26 @@ function cmIntro(block) {
 }
 
 // ---- the student's passage --------------------------------------------------
-function _cmOptHtml(blockId, bi, oi, text) {
-  return '<button type="button" class="cm-opt" data-cm-blk="' + escapeHtml(blockId) + '"'
-    + ' data-cm-b="' + bi + '" data-cm-o="' + oi + '">'
-    + '<i>' + (oi + 1) + '</i>' + escapeHtml(text) + '</button>';
+// One blank's drop-down (v2.3.0). The options used to print inline, in their
+// brackets, exactly as the paper sets them — and on a passage of any length
+// that is unreadable on a phone: five blanks × four choices is eighty
+// characters of options threaded through the prose, and the student loses the
+// sentence they are supposed to be reading for meaning.
+//
+// The drop-down collapses each set back to one control at the blank. The PAPER
+// keeps its brackets (cmPrintHtml is untouched) — screen and paper differ here
+// on purpose, the same way the synthesis marks box does.
+//
+// The option's NUMBER travels with its words: the marking scheme answers
+// "16 (3)", so the number is part of the answer and a list showing only the
+// words would leave the student unable to check their work against a key.
+function _cmOptionsHtml(options, picked) {
+  const out = ['<option value="-1">—</option>'];
+  (options || []).forEach((o, oi) => {
+    out.push('<option value="' + oi + '"' + (picked === oi ? ' selected' : '') + '>'
+      + '（' + (oi + 1) + '）' + escapeHtml(o) + '</option>');
+  });
+  return out.join('');
 }
 function cmStudentHtml(block, containerSel, oidxs) {
   const parts = _cmParse(block.text || '');
@@ -20871,9 +20942,9 @@ function cmStudentHtml(block, containerSel, oidxs) {
     const bi = k++;
     return '<span class="cm-blank" data-cm-blank="' + bi + '">'
       + '<b class="cm-num">' + (start + bi) + '</b>'
-      + '<span class="cm-opts">（'
-      + p.options.map((o, oi) => _cmOptHtml(block.id, bi, oi, o)).join('')
-      + '）</span></span>';
+      + '<select class="cm-pick" data-cm-blk="' + escapeHtml(block.id) + '" data-cm-b="' + bi + '"'
+      + ' aria-label="第' + (start + bi) + '题">' + _cmOptionsHtml(p.options, -1) + '</select>'
+      + '<span class="cm-ans" data-cm-ans="' + bi + '"></span></span>';
   }).join('');
   const intro = cmIntro(block);
   return '<div class="cm-wrap" data-cm-wrap="' + escapeHtml(block.id) + '" data-cm-sel="' + escapeHtml(containerSel) + '">'
@@ -20882,35 +20953,35 @@ function cmStudentHtml(block, containerSel, oidxs) {
     + '<div class="cm-actions">'
     + '<button type="button" class="btn btn-check" data-cm-check="' + escapeHtml(containerSel) + '" data-cm-blk="' + escapeHtml(block.id) + '">✓ Check answers</button>'
     + '<button type="button" class="btn btn-ghost" data-cm-clear="' + escapeHtml(containerSel) + '" data-cm-blk="' + escapeHtml(block.id) + '">↺ Clear all</button>'
-    + '<span class="cm-hint">在括号里点选一个词语。</span>'
+    + '<span class="cm-hint">在每个空格的下拉列表中选出适当的词语。</span>'
     + '</div>'
     + '<div class="cm-feedback" data-cm-fb="' + escapeHtml(block.id) + '"></div>'
     + '</div>';
 }
 
 function _cmWrapOf(el) { return el && el.closest ? el.closest('[data-cm-wrap]') : null; }
-// The pick is a RENDER of the chosen button, never a second list kept beside
-// it: a map of choices held in parallel is one click away from disagreeing with
-// the passage the student can see.
-function cmPick(blockId, bi, oi, el) {
+// The choice is READ OFF the drop-down, never kept in a map beside it: a
+// parallel list of picks is one change away from disagreeing with the passage
+// the student can see.
+function cmPicked(el) {
   const wrap = _cmWrapOf(el); if (!wrap) return;
-  if (wrap.classList.contains('cm-locked')) return;
-  const group = wrap.querySelectorAll('.cm-opt[data-cm-b="' + bi + '"]');
-  const already = Array.from(group).some(b => Number(b.dataset.cmO) === oi && b.classList.contains('on'));
-  group.forEach(b => b.classList.toggle('on', !already && Number(b.dataset.cmO) === oi));
+  const bi = el.getAttribute('data-cm-b');
   const blank = wrap.querySelector('.cm-blank[data-cm-blank="' + bi + '"]');
-  if (blank) { blank.classList.remove('right', 'wrong'); blank.classList.toggle('done', !already); }
+  if (blank) { blank.classList.remove('right', 'wrong'); blank.classList.toggle('done', Number(el.value) >= 0); }
+  const ans = wrap.querySelector('.cm-ans[data-cm-ans="' + bi + '"]');
+  if (ans) ans.textContent = '';
 }
 function _cmPicked(wrap, bi) {
-  const on = wrap.querySelector('.cm-opt[data-cm-b="' + bi + '"].on');
-  return on ? Number(on.dataset.cmO) : -1;
+  const sel = wrap.querySelector('.cm-pick[data-cm-b="' + bi + '"]');
+  const n = sel ? Number(sel.value) : -1;
+  return (isFinite(n) && n >= 0) ? n : -1;
 }
 function cmCheck(containerSel, blockId) {
   const c = document.querySelector(containerSel); if (!c) return;
   const store = (_cmStore[containerSel] || []).find(x => x.blockId === blockId); if (!store) return;
   const wrap = c.querySelector('[data-cm-wrap="' + blockId + '"]'); if (!wrap) return;
   const picked = store.blanks.map((_, i) => _cmPicked(wrap, i));
-  if (!picked.some(p => p >= 0)) { showToast('先在括号里选一个词语', 'info'); return; }
+  if (!picked.some(p => p >= 0)) { showToast('先在下拉列表中选出词语', 'info'); return; }
 
   let correct = 0, markable = 0;
   const wrong = [];
@@ -20923,15 +20994,18 @@ function cmCheck(containerSel, blockId) {
     const ok = picked[i] === b.correct;
     if (ok) correct++; else wrong.push({ num: store.startNum + i, opt: b.correct + 1, word: b.options[b.correct] || '' });
     if (blank) { blank.classList.toggle('right', ok); blank.classList.toggle('wrong', !ok); }
-    wrap.querySelectorAll('.cm-opt[data-cm-b="' + i + '"]').forEach(btn => {
-      const oi = Number(btn.dataset.cmO);
-      btn.classList.toggle('is-right', oi === b.correct);
-      btn.classList.toggle('is-wrong', oi === picked[i] && oi !== b.correct);
-    });
+    // The correct choice is shown AT the blank, not only in the list at the
+    // bottom: on a passage of five blanks a student reading "16 (3) 解决" under
+    // the paragraph has to count blanks back up to find which one it was.
+    const ans = wrap.querySelector('.cm-ans[data-cm-ans="' + i + '"]');
+    if (ans) ans.textContent = ok ? '' : '（' + (b.correct + 1) + '）' + (b.options[b.correct] || '');
     _setPartResult(containerSel, 'open:' + store.oidxs[i], ok ? 'correct' : 'incorrect', ok ? 1 : 0,
       b.options[b.correct] || '', picked[i] >= 0 ? (b.options[picked[i]] || '') : '');
   });
   wrap.classList.add('cm-locked');
+  // A <select> ignores a class: without this the student can still change an
+  // answer after the passage has been marked and scored.
+  wrap.querySelectorAll('.cm-pick').forEach(sel => { sel.disabled = true; });
   const fb = wrap.querySelector('[data-cm-fb="' + blockId + '"]');
   if (fb) {
     fb.innerHTML = '<span style="font-weight:700;color:' + (correct === markable ? 'var(--primary)' : 'var(--accent-orange)') + ';">'
@@ -20946,7 +21020,8 @@ function cmClearAll(containerSel, blockId) {
   const c = document.querySelector(containerSel); if (!c) return;
   const wrap = c.querySelector('[data-cm-wrap="' + blockId + '"]'); if (!wrap) return;
   wrap.classList.remove('cm-locked');
-  wrap.querySelectorAll('.cm-opt').forEach(b => b.classList.remove('on', 'is-right', 'is-wrong'));
+  wrap.querySelectorAll('.cm-pick').forEach(sel => { sel.disabled = false; sel.value = '-1'; });
+  wrap.querySelectorAll('.cm-ans').forEach(a => { a.textContent = ''; });
   wrap.querySelectorAll('.cm-blank').forEach(b => b.classList.remove('right', 'wrong', 'done', 'unkeyed'));
   const fb = wrap.querySelector('[data-cm-fb="' + blockId + '"]');
   if (fb) fb.innerHTML = '';
@@ -21486,9 +21561,11 @@ document.addEventListener('drop', function (e) {
   const block = _cbBlockOf(_cbSelOf(wrap), s.dataset.cbBlock);
   if (block) _cbPlace(wrap, s, raw.slice(7), block);
 });
+document.addEventListener('change', function (e) {
+  const pick = e.target && e.target.closest ? e.target.closest('.cm-pick') : null;
+  if (pick) cmPicked(pick);
+});
 document.addEventListener('click', function (e) {
-  const cmOpt = e.target.closest && e.target.closest('.cm-opt');
-  if (cmOpt) { e.preventDefault(); cmPick(cmOpt.getAttribute('data-cm-blk'), Number(cmOpt.dataset.cmB), Number(cmOpt.dataset.cmO), cmOpt); return; }
   const cmChk = e.target.closest && e.target.closest('[data-cm-check]');
   if (cmChk) { e.preventDefault(); cmCheck(cmChk.getAttribute('data-cm-check'), cmChk.getAttribute('data-cm-blk')); return; }
   const cmClr = e.target.closest && e.target.closest('[data-cm-clear]');
