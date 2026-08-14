@@ -1817,7 +1817,7 @@ async function enterApp(user) {
 
 // App version shown to admins in the sidebar. BUMP THIS on every change you
 // deploy (see CLAUDE.md) so the admin can confirm the latest build is live.
-const APP_VERSION = 'v2.0.1';
+const APP_VERSION = 'v2.1.0';
 // ---- The always-visible session bar ----
 // Staff must never be in any doubt about whose account is being played, so
 // this sits above everything until the session ends.
@@ -8939,6 +8939,38 @@ function _separateOptionLines(text) {
   return s.replace(splitRe, '<br>');
 }
 
+// 画线词语 — the ONE place an underline the paper printed becomes markup.
+//
+// 汉语拼音 is why this exists. The paper underlines the word the question is
+// about — 弟弟不小心把果汁洒在自己的<u>衬衫</u>上 — and the four options are
+// nothing but that word's pinyin: cēn sān / cèn sān / chēn shān / chèn shān.
+// Transcribe the sentence without the underline and the question still reads
+// perfectly, still prints perfectly, and no longer says WHICH of a dozen words
+// the pinyin belongs to. Every option is then a plausible answer to a question
+// nobody can answer, and nothing on screen looks wrong.
+//
+// Three forms arrive and leave as one. The prompt asks for <u>…</u>; a model
+// reaching for markdown writes __word__ instead — the same marker a pasted
+// passage carries (_pbPassageHtml) — and a model escaping its own tag on the
+// way through JSON writes &lt;u&gt;.
+//
+// An unbalanced tag is DROPPED rather than repaired: an opener with no closer
+// underlines the whole of the rest of the question, which reads as a fault in
+// the app rather than as the question the paper set.
+function _aiUnderline(text) {
+  let s = String(text == null ? '' : text);
+  if (!s) return s;
+  s = s.replace(/&lt;\s*u\s*&gt;/gi, '<u>')
+    .replace(/&lt;\s*\/\s*u\s*&gt;/gi, '</u>')
+    .replace(/<\s*u\s*>/gi, '<u>')
+    .replace(/<\s*\/\s*u\s*>/gi, '</u>')
+    .replace(/__([^_\n]{1,80})__/g, '<u>$1</u>');
+  const opens = (s.match(/<u>/g) || []).length;
+  const closes = (s.match(/<\/u>/g) || []).length;
+  if (opens !== closes) s = s.replace(/<\/?u>/g, '');
+  return s;
+}
+
 // The "tags" instruction shared by the single-screenshot and bulk-import prompts.
 // The tags already in the bank are handed over so the model reuses a spelling we
 // have rather than minting "spring elastic force" beside "elastic spring force" —
@@ -8980,7 +9012,10 @@ function buildBlocksFromAi(data) {
       // AI can be stamped on it below.
       const _at = blocks.length;
       if (t === 'text') {
-        const txt = _separateOptionLines(stripBrackets(b.text || b.content));
+        // _aiUnderline last: the underline the paper printed against the word a
+        // 汉语拼音 question is about survives into the block, where every
+        // surface renders it and both print builders keep it.
+        const txt = _aiUnderline(_separateOptionLines(stripBrackets(b.text || b.content)));
         if (txt) blocks.push({ id: generateBlockId(), type: 'text', content: txt });
       } else if (t === 'image') {
         blocks.push({ id: generateBlockId(), type: 'image', url: '', caption: stripBrackets(b.caption) });
@@ -9064,7 +9099,7 @@ function buildBlocksFromAi(data) {
       if (part && blocks.length > _at) blocks[_at].part = part;
     });
   } else {
-    const qText = _separateOptionLines(stripBrackets(data.questionText));
+    const qText = _aiUnderline(_separateOptionLines(stripBrackets(data.questionText)));
     if (qText) blocks.push({ id: generateBlockId(), type: 'text', content: qText });
     if (data.hasDiagram) blocks.push({ id: generateBlockId(), type: 'image', url: '' });
     if (String(data.answerType || 'cer').toLowerCase() === 'plain') pushPlain(data.answer || '');
@@ -9094,6 +9129,43 @@ function _aiSuggestedTags(data) {
     out.push(hit || t);       // the house spelling if we already have one
   });
   return out.slice(0, 6);     // a suggestion, not a keyword-stuffing exercise
+}
+
+// A page can hold SEVERAL questions. This is the ONE place a build reply becomes
+// the list of questions it describes, so every path that reads one — ⚡ Rapid
+// add, 🤖 Build from screenshot — agrees on how many are on the page.
+//
+// A 语文应用 page of 1, 2, 3, 4, 5 holds FIVE questions, not one question with
+// five parts: they share no passage, a student is served one at a time and each
+// is marked on its own. A 短文填空 or 阅读理解 page is the opposite — one
+// passage its questions cannot be read without — and stays ONE question with
+// lettered parts.
+//
+// The single-question shape is still the default and still what most pages come
+// back as; `questions` is the array form. Each entry INHERITS the top-level
+// title / topic / category / tags it does not carry itself, because a model told
+// to write them per entry reliably writes them once at the top and then stops —
+// and a question landing in vetting with no topic is one an author has to open
+// and fix by hand.
+//
+// An empty or unusable `questions` array falls back to the whole reply rather
+// than returning nothing: a page that produced blocks must produce a question.
+function _aiQuestionPayloads(parsed) {
+  if (!parsed || typeof parsed !== 'object') return [];
+  const list = Array.isArray(parsed.questions) ? parsed.questions : null;
+  if (!list) return [parsed];
+  const kept = list.filter(x => x && typeof x === 'object' && Array.isArray(x.blocks) && x.blocks.length);
+  if (!kept.length) return Array.isArray(parsed.blocks) && parsed.blocks.length ? [parsed] : [];
+  const pick = (a, b) => (a == null || a === '' ? b : a);
+  return kept.map(x => ({
+    title: pick(x.title, parsed.title),
+    topic: pick(x.topic, parsed.topic),
+    category: pick(x.category, parsed.category),
+    tags: (Array.isArray(x.tags) && x.tags.length) ? x.tags : parsed.tags,
+    questionType: pick(x.questionType, parsed.questionType),
+    topicConfidence: pick(x.topicConfidence, parsed.topicConfidence),
+    blocks: x.blocks
+  }));
 }
 
 function buildQuestionFromAi(data) {
@@ -9586,10 +9658,18 @@ function _aiBuildQuestionPrompt(isPdf, imageCount) {
     SCAN_READING_NOTE +
     _genPreamble() +
     (multi ? `IMPORTANT: the ${n} attached images are CONSECUTIVE screenshots of ONE AND THE SAME question, already in reading order (image 1 first). Read them as one continuous question — do NOT treat them as separate questions and do NOT drop content from any of the images. Very often this is a PASSAGE on the first image or two and the numbered questions about it on the rest: that is questionType "passage", and every numbered question becomes its own "part". Content from the LAST image matters as much as the first — read to the end.\n` : '') +
-    `FIRST decide the question type: "mcq" if the question gives a set of answer options to choose from (e.g. (1)(2)(3)(4) or A/B/C/D), otherwise "open".\n` +
+    `FIRST decide HOW MANY QUESTIONS this source holds. This decision comes before everything else:\n` +
+    `  • Several NUMBERED questions that do NOT share a passage, picture or instruction line — a 语文应用 page of 1, 2, 3, 4, 5, each one sentence of its own with its own four options — are SEPARATE questions. Return ONE entry per number. Never merge them into one question with parts (a), (b), (c): they are unrelated to each other, a student is served one at a time, and each is marked on its own.\n` +
+    `  • A passage, article, poster or infographic followed by numbered questions ABOUT it (阅读理解) is ONE question, however many numbers it carries and however many pages it is spread over — the questions cannot be read without the passage. Return a SINGLE entry with questionType "passage" and letter its sub-questions (a), (b), (c) as described below.\n` +
+    `  • 短文填空 — ONE passage with numbered blanks running through it — is ONE question too, never one per blank, whether the choices are printed at each blank or in a word bank above the passage.\n` +
+    `  • The test: if you deleted every other question on the page, would this one still make complete sense on its own? If yes they are separate questions; if no they belong together as one.\n` +
+    `Then decide each question's type: "mcq" if it gives a set of answer options to choose from (e.g. (1)(2)(3)(4) or A/B/C/D), "passage" for a shared passage with questions about it, otherwise "open".\n` +
     `Then return ONLY JSON with this exact shape:\n` +
-    `{"title":"short title","topic":"<closest topic>","category":"<closest category>","tags":["..."],"questionType":"mcq, open or passage","blocks":[ ...ordered blocks... ]}\n` +
-    `Use "passage" when the source is a passage, article, poster or infographic followed by SEVERAL numbered questions about it — however many pages that is spread over.\n` +
+    `{"questions":[ ...one entry per question you found, in the order they appear... ]}\n` +
+    `Each entry is: {"title":"short title","topic":"<closest topic>","category":"<closest category>","tags":["..."],"questionType":"mcq, open or passage","blocks":[ ...ordered blocks... ]}\n` +
+    `A source holding ONE question returns an array of ONE entry. Give EVERY entry its own title, topic, category and tags — never leave them off the later entries.\n` +
+    `- THE PAPER'S QUESTION NUMBER IS ONLY THE SIGNAL that they are separate questions. Do NOT keep it anywhere: no "part" field, and never write "2"、"2." 、"2、" or "（2）" into the text of any block. A bank question stands on its own, and one that opens at question 61 reads as though sixty are missing.\n` +
+    `- Give each entry the blocks that match what THAT question actually is, decided per question and not once for the page: a sentence-rewrite (改写句子) becomes a "synthesis" block, a multiple-choice one an "mcq" block, a 短文填空 passage a "clozemcq" block, an open question a text block plus an answer block. Two questions on the same page can be different types.\n` +
     `Each item in "blocks" is ONE of these objects:\n` +
     (multi
       ? `  {"type":"image","page":<which attached image, 1-based>,"box_2d":[ymin,xmin,ymax,xmax]}   (one diagram/picture/graph/figure/experimental setup OR one data table — "page" says which attached image it is on, and box_2d is the rectangle you draw around it on THAT image)\n`
@@ -9621,8 +9701,14 @@ function _aiBuildQuestionPrompt(isPdf, imageCount) {
 // way whichever door it came in through. The point of the last rule: an
 // explanation is read as explaining the question printed directly above it, so
 // one explanation covering three parts, dropped under part (a), is wrong.
+//
+// It carries the block types that describe a whole section of the paper too
+// (synthesis, 短文填空) and, FIRST, the one transcription rule every build path
+// needs: the 画线 underline. A rule that lives here reaches all five prompts at
+// once — which is the whole reason it is a fragment and not five paragraphs.
 function _partsPromptRules() {
-  return `- LETTERED PARTS: if the question has sub-parts (a), (b), (c), give EACH part its own text block, starting with its own marker written exactly as "(a) " / "(b) " — one marker per block, never two parts in the same block.\n` +
+  return `- 画线词语 — AN UNDERLINED WORD: where the paper UNDERLINES a word or phrase, wrap exactly that word in <u>…</u> in the text block: "弟弟不小心把果汁洒在自己的<u>衬衫</u>上，哭着喊妈妈帮他换。". This is the ONE piece of markup your reply may contain, and a "plain text only, no markdown" rule anywhere else in these instructions does not remove it. It is not decoration: in 汉语拼音 the four options ARE that word's pinyin (cēn sān / cèn sān / chēn shān / chèn shān), so without the underline nothing says which of a dozen words on the line they belong to. Underline what the paper underlines and nothing else.\n` +
+    `- LETTERED PARTS: if the question has sub-parts (a), (b), (c), give EACH part its own text block, starting with its own marker written exactly as "(a) " / "(b) " — one marker per block, never two parts in the same block.\n` +
     `- THE "part" FIELD: any block may carry "part" — the sub-question it belongs to, written exactly as the paper prints it: "part":"a" for a lettered part, "part":"21" for a numbered one.\n` +
     `- A PASSAGE WITH SEVERAL QUESTIONS — a comprehension passage, article, poster or infographic followed by questions numbered 21, 22, 23… — is ONE question, never one question per number. Put the passage FIRST: its text blocks, and one "image" block for each picture, poster or diagram in it. Then one block for each question that follows, in order.\n` +
     `- LETTER those questions: "part":"a" for the first question after the passage, "part":"b" for the next, "part":"c", and so on in the order they appear. IGNORE the paper's own numbering — 21, 22, 23 are that exam paper's question numbers, not this question's, and this question stands on its own. Skip the letter "i".\n` +
@@ -9756,7 +9842,14 @@ async function handleAiBuildFiles(files) {
     const raw = await askGeminiVision(prompt, pages.map(p => ({ mimeType: p.mimeType, data: p.data })), { maxOutputTokens: budget, json: true });
     const parsed = _parseAIJson(raw);
     const truncated = _aiJsonRepaired;
-    _populateEditorFromAi(parsed);
+    // A page of 1, 2, 3, 4, 5 is several questions, and the editor holds ONE.
+    // Load the first and say so — silently building only the first of five,
+    // with nothing on screen to say the other four existed, is how they get
+    // lost. `built` is that entry, and it is what the crop below reads: its
+    // blocks are the ones now in the editor, so the rectangles line up.
+    const payloads = _aiQuestionPayloads(parsed);
+    const built = payloads[0] || parsed;
+    _populateEditorFromAi(built);
     checkEditorDuplicate();   // warn if this looks like a question already in the bank
     const hasImageBlock = blocks.some(b => b.type === 'image');
     // A passage question is many sub-questions in one, so say what came out of
@@ -9767,6 +9860,9 @@ async function handleAiBuildFiles(files) {
     const uniqParts = partList.filter((p, i) => partList.indexOf(p) === i);
     const mcqs = blocks.filter(b => b.type === 'mcq');
     const unticked = mcqs.filter(b => !b.correctId).length;
+    if (payloads.length > 1) {
+      showToast(`📄 That page holds ${payloads.length} SEPARATE questions — the editor has loaded the first. Use ⚡ Rapid add to get all ${payloads.length} into vetting at once.`, 'info');
+    }
     if (truncated) {
       showToast('⚠️ The AI ran out of room and its answer was cut short — check the END of the question, the last sub-questions may be missing. Read the screenshots again in two smaller batches if so.', 'error');
     } else if (uniqParts.length > 1) {
@@ -9775,7 +9871,11 @@ async function handleAiBuildFiles(files) {
     }
     if (!isPdf && hasImageBlock) {
       if (!truncated && uniqParts.length <= 1) showToast('Question built ✓ — cropping the AI-selected pictures next…', 'success');
-      _autoFillDiagramsFromBoxes(parsed, pages); // async: crops each AI-drawn rectangle from its own screenshot; the whole screenshot is the backup
+      // `built`, never `parsed`: the crop pairs each rectangle with the image
+      // block the SAME entry produced. Handed the whole reply it would find no
+      // blocks at all on a page that came back as a "questions" array, and the
+      // pictures would quietly stop being cropped.
+      _autoFillDiagramsFromBoxes(built, pages); // async: crops each AI-drawn rectangle from its own screenshot; the whole screenshot is the backup
     } else if (!truncated && uniqParts.length <= 1) {
       showToast('Question built — review it' + (hasImageBlock ? ', paste the diagram,' : '') + ' then Save', 'success');
     }
@@ -10218,64 +10318,105 @@ async function processRapidJob(jobId, file) {
     const isImg = file.type && file.type.startsWith('image/');
     if (!isPdf && !isImg) throw new Error('not an image or PDF');
 
-    // 1) Read the question into blocks (same prompt as Build from screenshot).
+    // 1) Read the page into blocks (same prompt as Build from screenshot).
+    //
+    // A 语文应用 page of 1, 2, 3, 4, 5 holds FIVE questions, not one question
+    // with five parts: they share no passage, a student is served one at a
+    // time, and each is marked on its own. _aiQuestionPayloads is the one place
+    // that decision is read out of the reply.
     const b64 = await _fileToBase64(file);
-    const raw = await askGeminiVision(_aiBuildQuestionPrompt(isPdf), [{ mimeType: file.type, data: b64 }], { maxOutputTokens: 4096, json: true });
+    // The budget scales with what a page can hold. One question fits 4096; five
+    // 改写句子 questions with their model answers do not — and running out does
+    // not fail, it TRUNCATES, and _repairAIJson then hands back a valid-looking
+    // reply missing its last questions entirely.
+    const raw = await askGeminiVision(_aiBuildQuestionPrompt(isPdf), [{ mimeType: file.type, data: b64 }], { maxOutputTokens: 8192, json: true });
     const parsed = _parseAIJson(raw);
-    const q = buildQuestionFromAi(parsed);
+    const truncated = _aiJsonRepaired;
+    const payloads = _aiQuestionPayloads(parsed);
+    if (!payloads.length) throw new Error('the AI returned nothing readable');
+    const many = payloads.length > 1;
 
-    // 2) Crop each AI-drawn rectangle (box_2d) out of the screenshot into its
-    //    image block. If the selection failed everywhere, fall back to the old
-    //    flow: enhance the WHOLE picture and attach it to the first image block.
-    if (isImg) {
-      const imgBlocks = q.blocks.filter(b => b.type === 'image');
-      if (imgBlocks.length) {
-        _setRapidJobState(jobId, { title: q.title || 'Question', sub: 'Cropping the AI-selected pictures…' });
-        renderVettingList();
-        const boxes = ((parsed && parsed.blocks) || [])
-          .filter(b => String((b && b.type) || '').toLowerCase() === 'image')
-          .map(b => (b && (b.box_2d || b.box)) || null);
-        let filled = 0;
-        try {
-          filled = await _fillBlocksFromAiBoxes(imgBlocks, boxes, file.type, b64, m => { _setRapidJobState(jobId, { sub: m }); renderVettingList(); });
-        } catch (e) { console.warn('rapid AI rectangle flow failed', e); }
-        if (!filled) {
-          // BACKUP — whole screenshot, enhanced to black & white.
-          const imgBlock = imgBlocks[0];
-          _setRapidJobState(jobId, { sub: 'Enhancing the whole image (black & white)…' });
+    const added = [];
+    for (let pi = 0; pi < payloads.length; pi++) {
+      const payload = payloads[pi];
+      const q = buildQuestionFromAi(payload);
+      // The paper's number is the signal that these are separate questions, not
+      // part of any of them. The model is told not to keep it; this is the guard
+      // for when it does, and it is the exam paper builder's own stripper.
+      if (many) { try { _epStripNumbering(q); } catch (e) { console.warn('rapid numbering strip', e); } }
+
+      // 2) Crop each AI-drawn rectangle (box_2d) out of the screenshot into its
+      //    image block — from THIS question's own blocks, or five questions
+      //    would share the first one's pictures. If the selection failed
+      //    everywhere, fall back: enhance the WHOLE picture into the first
+      //    image block. That backup is for a single-question page only; on a
+      //    page of five it would give every one of them the same whole-page
+      //    picture, which is worse than no picture at all.
+      if (isImg) {
+        const imgBlocks = q.blocks.filter(b => b.type === 'image');
+        if (imgBlocks.length) {
+          _setRapidJobState(jobId, {
+            title: q.title || 'Question',
+            sub: (many ? `Question ${pi + 1} of ${payloads.length} — ` : '') + 'cropping the AI-selected pictures…'
+          });
           renderVettingList();
-          const original = 'data:' + file.type + ';base64,' + b64;
+          const boxes = (payload.blocks || [])
+            .filter(b => String((b && b.type) || '').toLowerCase() === 'image')
+            .map(b => (b && (b.box_2d || b.box)) || null);
+          let filled = 0;
           try {
-            const dataUrl = imageAiReady()
-              ? await generateEnhancedImageDataUrl(_BW_ENHANCE_PROMPT, [{ mimeType: file.type, data: b64 }])
-              : original;
-            imgBlock.url = await uploadImageDataUrl(dataUrl);
-            // Seed in-session image state so Crop / Touch up / Enhance work when this
-            // question is opened in the editor (mirrors Build-from-screenshot).
-            _imgEnhanceState[imgBlock.id] = { originalDataUrl: dataUrl, originalUrl: imgBlock.url, currentDataUrl: dataUrl };
-          } catch (imgErr) {
-            console.warn('rapid B&W enhance failed; attaching original screenshot', imgErr);
+            filled = await _fillBlocksFromAiBoxes(imgBlocks, boxes, file.type, b64, m => { _setRapidJobState(jobId, { sub: m }); renderVettingList(); });
+          } catch (e) { console.warn('rapid AI rectangle flow failed', e); }
+          if (!filled && !many) {
+            // BACKUP — whole screenshot, enhanced to black & white.
+            const imgBlock = imgBlocks[0];
+            _setRapidJobState(jobId, { sub: 'Enhancing the whole image (black & white)…' });
+            renderVettingList();
+            const original = 'data:' + file.type + ';base64,' + b64;
             try {
-              imgBlock.url = await uploadImageDataUrl(original);
-              _imgEnhanceState[imgBlock.id] = { originalDataUrl: original, originalUrl: imgBlock.url, currentDataUrl: original };
-            } catch (e2) { /* leave url empty; paste manually later */ }
+              const dataUrl = imageAiReady()
+                ? await generateEnhancedImageDataUrl(_BW_ENHANCE_PROMPT, [{ mimeType: file.type, data: b64 }])
+                : original;
+              imgBlock.url = await uploadImageDataUrl(dataUrl);
+              // Seed in-session image state so Crop / Touch up / Enhance work when this
+              // question is opened in the editor (mirrors Build-from-screenshot).
+              _imgEnhanceState[imgBlock.id] = { originalDataUrl: dataUrl, originalUrl: imgBlock.url, currentDataUrl: dataUrl };
+            } catch (imgErr) {
+              console.warn('rapid B&W enhance failed; attaching original screenshot', imgErr);
+              try {
+                imgBlock.url = await uploadImageDataUrl(original);
+                _imgEnhanceState[imgBlock.id] = { originalDataUrl: original, originalUrl: imgBlock.url, currentDataUrl: original };
+              } catch (e2) { /* leave url empty; paste manually later */ }
+            }
           }
         }
       }
+
+      // 3) Promote to a real Vetting question and persist. Done per question
+      //    rather than in a batch at the end, so a failure on question 4 cannot
+      //    lose the three that already read perfectly.
+      _tagDuplicate(q);   // flag if it looks like a question already in the bank
+      vettingList.unshift(q);
+      _rapidJustAdded.add(q.id);
+      _rapidAddedCount++;
+      added.push(q);
+      updateCounts();
+      _updateRapidCounts();
+      renderVettingList();
+      saveVettingQuestion(q); // async, non-blocking
     }
 
-    // 3) Promote to a real Vetting question (newest first) and persist.
-    _tagDuplicate(q);   // flag if it looks like a question already in the bank
     _removeRapidJob(jobId);
-    vettingList.unshift(q);
-    _rapidJustAdded.add(q.id);
-    _rapidAddedCount++;
-    updateCounts();
     _updateRapidCounts();
     renderVettingList();
-    saveVettingQuestion(q); // async, non-blocking
-    _setRapidStatus('✓ Added "' + (q.title || 'question') + '" to vetting.');
-    showToast('Added "' + (q.title || 'question') + '" to vetting ✓', 'success');
+    const what = many
+      ? `${added.length} separate questions`
+      : '"' + (added[0].title || 'question') + '"';
+    _setRapidStatus('✓ Added ' + what + ' to vetting.');
+    showToast('Added ' + what + ' to vetting ✓', 'success');
+    if (truncated) {
+      showToast('⚠️ The AI ran out of room and its answer was cut short — the LAST question on that page may be missing. Screenshot the rest on its own if so.', 'error');
+    }
   } catch (err) {
     console.error('rapid job failed:', err);
     const job = rapidJobs.find(j => j.id === jobId);
@@ -15307,8 +15448,15 @@ function _epKeyPrompt(i, total) {
 // the marking scheme.
 // The (?!\d) is load-bearing: without it "2.5 kg of ice was heated" opens with
 // what looks exactly like question 2, and the question would start "5 kg".
-const EP_LEAD_NUM_RE = /^\(?\s*\d{1,3}\s*[).]\s*(?!\d)/;                 // "44." "44)" "(44)"
-const EP_NUM_THEN_PART_RE = /^\s*\d{1,3}\s+(?=\(?\s*[a-hA-H]\s*[).])/;   // "44 (a)"
+//
+// FULL-WIDTH forms are not optional here. A 华文 paper numbers its questions
+// "2、", "２．" and "（2）", and ZH_PROMPT_RULES tells every model to keep the
+// paper's punctuation exactly as printed — so a stripper that knows only "44."
+// and "(44)" reads every Chinese paper as unnumbered and leaves the paper's
+// number sitting at the head of the question. On a page of five that is five
+// bank questions each opening with somebody else's question number.
+const EP_LEAD_NUM_RE = /^[(（]?\s*[0-9０-９]{1,3}\s*[).）．、]\s*(?![0-9０-９])/;      // "44." "44)" "(44)" "2、" "（2）"
+const EP_NUM_THEN_PART_RE = /^\s*[0-9０-９]{1,3}\s+(?=[(（]?\s*[a-hA-H]\s*[).）])/;   // "44 (a)"
 
 // Remove a leading number from html WITHOUT cutting through the markup — the
 // number is often wrapped ("<strong>44.</strong>"), so a plain-text offset
@@ -18708,20 +18856,42 @@ function escapeHtml(str) {
 }
 
 // Escape a text block's HTML for print while KEEPING its line breaks (so
-// inline option lists like "A: …<br>B: …" don't collapse onto one line).
-// <br> and block-level closings become newlines; other tags are stripped.
+// inline option lists like "A: …<br>B: …" don't collapse onto one line) and
+// the ONE piece of formatting the paper itself prints: the UNDERLINE.
+//
+// <br> and block-level closings become newlines; every other tag is stripped.
+// <u> is carried across the escape on a sentinel and put back afterwards, so
+// nothing else an author or a model wrote can become live markup.
+//
+// The underline is not decoration — see _aiUnderline. A 汉语拼音 question
+// underlines the word its four pinyin options belong to, and this function is
+// what BOTH print builders send a text block through. Strip it here and the
+// worksheet prints beautifully, with no word underlined and four spellings of
+// a word the student now has to guess at.
 function escapeHtmlKeepLines(content) {
   if (!content) return '';
+  // Two characters no question can contain, so nothing an author typed can be
+  // mistaken for the marker (and they are local: read at call time only).
+  const KEEP_U_OPEN = '\u0001', KEEP_U_CLOSE = '\u0002';
   const withBreaks = String(content)
+    .replace(/[\u0001\u0002]/g, '')     // one already in the text is not a marker
     .replace(/<\s*br\s*\/?>/gi, '\n')
-    .replace(/<\/(p|div|li|tr|h[1-6])\s*>/gi, '\n');
+    .replace(/<\/(p|div|li|tr|h[1-6])\s*>/gi, '\n')
+    .replace(/<\s*u\s*>/gi, KEEP_U_OPEN)
+    .replace(/<\s*\/\s*u\s*>/gi, KEEP_U_CLOSE);
   const lines = withBreaks
     .replace(/<[^>]*>/g, '')
     .replace(/&nbsp;/g, ' ')
     .split('\n')
     .map(l => l.replace(/[ \t]+/g, ' ').trim())
     .filter(l => l.length);
-  return lines.map(escapeHtml).join('<br>');
+  let out = lines.map(escapeHtml).join('<br>');
+  // An underline left open by a line that was dropped would run to the end of
+  // the printed question, so the tags go back only while they still pair up.
+  const opens = out.split(KEEP_U_OPEN).length - 1;
+  const closes = out.split(KEEP_U_CLOSE).length - 1;
+  if (opens !== closes) return out.split(KEEP_U_OPEN).join('').split(KEEP_U_CLOSE).join('');
+  return out.split(KEEP_U_OPEN).join('<u>').split(KEEP_U_CLOSE).join('</u>');
 }
 
 // A repeated message stacks a counter instead of a new toast, and the container
