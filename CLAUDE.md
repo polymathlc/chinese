@@ -529,6 +529,69 @@ asks for.
   last questions. `_aiJsonRepaired` is what warns the author instead.
 - Run **`node tools/rapid-split-tests.mjs`** after touching any of it.
 
+## 阅读理解问答 — a passage answered IN WRITING (v2.2.0)
+
+The B组 of the paper: one 短文, then Q34–Q40 answered in sentences, each with a
+ruled box and its own marks — *（2分）*, *（4分）*, 7题22分. No options anywhere.
+
+It needed **no new block type**. It is a passage question like any other: the
+passage in text blocks with no part, then per question a `text` block carrying
+its letter and a `plainanswer` block carrying the same letter and the model
+answer. What it needed was the three things that were missing around it —
+**marks**, **a way to answer by hand**, and **a whole script of photos**.
+
+### 分 — the marks the paper gives each answer
+
+- **`qaMarks(block)` is the ONE place a block's allocation is read**, and
+  **`qaWeight` is the ONE place it becomes a score**. `qaMarks` returns 0 for
+  "not set"; `qaWeight(0)` is **1**. That default is the whole compatibility
+  story: every question authored before 分 existed is scored exactly as it
+  always was, one point a part.
+- A verdict is worth `w` / `w/2` / `0`, so a 4分 question outweighs a 1分 one and
+  the question is out of the paper's 22 rather than out of 7. **Both marking
+  paths weight identically** — `markOpenAnswersIn` and `markQuestionPart` — or
+  the score would change with the button the student happened to press.
+- `_openTotalWeight` reads the denominator from the ITEM store, never from the
+  results, so the total does not grow as parts are marked.
+- **Marks are taken on a `plainanswer` only.** A Claim/Evidence/Reasoning block
+  renders THREE items, so an allocation stamped on it would be charged three
+  times and a 2分 question would be out of 6.
+- The marker is TOLD the marks (`marks=4` on the item line) — a 4分 answer wants
+  the reasons as well as the point, and without it the model marks to its own
+  idea of full. The label prints on the paper too (`qaPrintMarksHtml`), from the
+  same function, so screen and paper cannot disagree.
+
+### Three ways to answer, one marker
+
+- **Typed** — the 拼音 keyboard, as before. The box is sized from the marks: a
+  4分 answer gets a paragraph's worth of rows, a 1分 answer a phrase's.
+- **✍️ Handwritten on screen (`hw*`)** — a pad under every open answer, for a
+  stylus on an iPad. The ink is an ANSWER, not an annotation: the diagram pads
+  (`_annot*`) compare a drawing to a model drawing, this is handwriting the
+  marker READS. Strokes live **on the element**, never in a map keyed by index —
+  the same question can be on screen in two surfaces at once. `touch-action:none`
+  is load-bearing: without it the first stroke scrolls the page instead of
+  drawing. The listeners are ONE delegated set, because this app builds its DOM
+  continuously and anything bound per pad misses every pad made afterwards.
+- **📸 Photographed — several pages at once.** `_openPhoto[containerSel]` is a
+  **LIST** (`_openPhotoList` is the one place it is read as one), because an
+  answer script runs to two or three sides and a one-photo route made the
+  student mark the page in instalments. They go in ONE call.
+
+- **`_openAnswerMedia` is the ONE place the images going to a marking call are
+  assembled and described**, and both marking paths ask it. The order is fixed —
+  pages first, then one image per pad with ink — and the note names each image
+  BY NUMBER. Let the note and the array drift apart and item (a) is marked
+  against item (d)'s handwriting: a wrong mark, delivered fluently, with nothing
+  on screen amiss. Marking ONE part sends only THAT part's ink; a multiple-choice
+  part gets the pages and no pads at all.
+- **The marker returns what it READ** and it is shown back to the student and
+  recorded as their answer. Without it a photographed script reaches the mistake
+  log and the learning-gap list as a blank, and a misreading is invisible.
+- The pads **lock and clear with the typed answers** (`hwLockIn` / `hwClearIn`),
+  or ink left through a reset is last attempt's answer waiting to be marked again.
+- Run **`node tools/written-answer-tests.mjs`** after touching any of it.
+
 ## ✍️ Synthesis & transformation (`sy*`, block type `synthesis`)
 
 Its Chinese equivalent is 改写句子 / 句子重组, and the block is unchanged: one or
@@ -1040,7 +1103,7 @@ reported in chat, to know whether the deploy actually went through.
   named constant used at every call site rather than a string typed out in three
   places, and swapping the model means checking its scale first. The Science app
   (`polymathlc/cer`) carries the same pair — keep the two in step.
-- Run the fourteen harnesses after touching what they cover — every failure they
+- Run the fifteen harnesses after touching what they cover — every failure they
   catch is **silent**, with nothing thrown and nothing wrong on screen:
   - `node tools/answer-key-tests.mjs`
   - `node tools/check-questions-tests.mjs`
@@ -1091,6 +1154,11 @@ reported in chat, to know whether the deploy actually went through.
     blanks lose the passage they are about; fail to split a 语文应用 page of
     five and four questions are silently thrown away, leaving one row in vetting
     that looks perfectly fine.
+  - `node tools/written-answer-tests.mjs` — 阅读理解问答: what each question is
+    worth, and WHICH IMAGE the marker is told is whose. The image order and the
+    note that numbers it must agree, or one part is marked against another
+    part's handwriting — a wrong mark, delivered fluently. A weight defaulting
+    to anything but 1 scores the whole existing bank out of zero.
   - `node tools/underline-tests.mjs` — 画线词语. The paper underlines the word a
     汉语拼音 question is about and the four options are that word's pinyin, so
     an underline lost in transcription — or kept on screen and stripped by the
