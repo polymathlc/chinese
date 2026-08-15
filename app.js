@@ -1819,7 +1819,112 @@ async function enterApp(user) {
 
 // App version shown to admins in the sidebar. BUMP THIS on every change you
 // deploy (see CLAUDE.md) so the admin can confirm the latest build is live.
-const APP_VERSION = 'v2.5.0';
+const APP_VERSION = 'v2.6.0';
+
+// =====================================================================
+// THE SUBJECT SWITCHER — one student, four subjects (v2.6.0)
+//
+// Polymath teaches four subjects through four SEPARATE apps. They share a
+// Firebase project and a sign-in, and they deliberately share nothing else:
+// four question banks, four sets of progress, four topic lists (see "Where the
+// data lives"). A student who is taught three of them had no way to get from
+// one to another except a bookmark per subject, which on a school Chromebook
+// means the one they never bookmarked is the one they stop using.
+//
+// This is a LINK and nothing more. It is four <a href>s, not a router:
+//   • Each app stays reachable at its own URL exactly as before — nothing here
+//     gates or redirects anything, so a bookmark, a shared link and a QR code
+//     all keep working.
+//   • Middle-click and open-in-new-tab behave the way a student expects, which
+//     a JS `location.href =` handler would quietly break.
+//   • Signing in is per app and unchanged. The uid is the same account in all
+//     four (one Firebase project), so switching subject does not mean signing
+//     in again.
+//
+// THE URLS ARE RELATIVE, and that is load-bearing. The four are GitHub Pages
+// project sites — polymathlc.github.io/{math,english,chinese,cer} — so they
+// are sibling folders on one host, and `../math/` resolves correctly there,
+// on a local checkout with the four repos side by side, and on a custom
+// domain later, without this file ever naming a domain. An absolute
+// https://polymathlc.github.io/... would pin every app to that host on the
+// day the centre moves to one of its own.
+//
+// NOTE the Science app's folder is `cer`, not `science` — that is the repo
+// name and it is what the URL really is. The label and the folder differ on
+// purpose; do not "fix" one to match the other.
+const SUBJECT_KEY = 'chinese';           // which of the four THIS app is
+const SUBJECT_APPS = [
+  { key: 'math',    ico: '🔢', label: 'Math',    sub: 'Math Practice',            url: '../math/' },
+  { key: 'english', ico: '📕', label: 'English', sub: 'English Learning Portal',  url: '../english/' },
+  { key: 'chinese', ico: '📗', label: 'Chinese', sub: '华文 · Chinese Portal',     url: '../chinese/' },
+  { key: 'science', ico: '🔬', label: 'Science', sub: 'Science Learning Portal',  url: '../cer/' }
+];
+
+function subjectCurrent() {
+  return SUBJECT_APPS.find(s => s.key === SUBJECT_KEY) || SUBJECT_APPS[0];
+}
+
+// The menu is BUILT from SUBJECT_APPS rather than written out in index.html,
+// so a subject added to that list appears in all four apps by editing one line
+// in each. The current subject is shown and marked, never dropped: a menu that
+// silently omits where you already are leaves a student unable to tell which
+// app they are looking at.
+function subjectRenderMenu() {
+  const menu = document.getElementById('subjectMenu');
+  if (!menu) return;
+  const rows = SUBJECT_APPS.map(s => {
+    const here = s.key === SUBJECT_KEY;
+    const body =
+      `<span class="subject-ico" aria-hidden="true">${s.ico}</span>` +
+      `<span><b>${escapeHtml(s.label)}</b><br><span style="font-size:0.74rem;color:var(--text-muted);">${escapeHtml(s.sub)}</span></span>` +
+      (here ? `<span class="subject-tick">You are here</span>` : '');
+    // The current app is a <div>, not an <a>: a link back to the page you are
+    // already on reloads the app and loses whatever was half-typed.
+    return here
+      ? `<div class="subject-opt here" role="menuitem" aria-current="page">${body}</div>`
+      : `<a class="subject-opt" role="menuitem" href="${escapeHtml(s.url)}">${body}</a>`;
+  }).join('');
+  menu.innerHTML =
+    `<div class="subject-menu-title">Your subjects</div>${rows}` +
+    `<div class="subject-menu-foot">Each subject keeps its own questions, progress and worksheets. You stay signed in.</div>`;
+}
+
+function subjectToggle(e) {
+  if (e) e.stopPropagation();
+  const wrap = document.getElementById('subjectSwitch');
+  if (!wrap) return;
+  const open = !wrap.classList.contains('open');
+  wrap.classList.toggle('open', open);
+  const btn = document.getElementById('subjectBtn');
+  if (btn) btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+}
+function subjectClose() {
+  const wrap = document.getElementById('subjectSwitch');
+  if (!wrap || !wrap.classList.contains('open')) return;
+  wrap.classList.remove('open');
+  const btn = document.getElementById('subjectBtn');
+  if (btn) btn.setAttribute('aria-expanded', 'false');
+}
+
+// Shown only once someone is signed in — it is fixed to the viewport, so on
+// the login screen it would float over the login card belonging to nobody.
+function subjectShow() {
+  const wrap = document.getElementById('subjectSwitch');
+  if (!wrap) return;
+  const me = subjectCurrent();
+  const ico = document.getElementById('subjectIco');
+  const name = document.getElementById('subjectName');
+  if (ico) ico.textContent = me.ico;
+  if (name) name.textContent = me.label;
+  subjectRenderMenu();
+  wrap.style.display = '';
+}
+
+// Bound ONCE on the document rather than per element: the menu's contents are
+// rebuilt, and a listener attached to a row would go with the row it was on.
+document.addEventListener('click', subjectClose);
+document.addEventListener('keydown', e => { if (e.key === 'Escape') subjectClose(); });
+
 // ---- The always-visible session bar ----
 // Staff must never be in any doubt about whose account is being played, so
 // this sits above everything until the session ends.
@@ -1947,6 +2052,12 @@ async function startPracticeAs(uid) {
 function configureSidebarForRole(role) {
   const vb = document.getElementById('appVersionBadge');
   if (vb) vb.textContent = APP_VERSION;
+  // Every signed-in path — admin, employee and student — comes through here,
+  // which is why the subject switcher is turned on from this one place rather
+  // than from three call sites that could drift apart. It is shown to ALL
+  // three roles: a student needs it to reach their other subjects, and an
+  // author moving between the four banks needs it just as much.
+  subjectShow();
   ensureMobileToggles();
   loadCustomTopics();
   rebuildTopicSelect();
@@ -9683,10 +9794,19 @@ function aiBuildFilesChosen(files) {
 // The exact prompt used to turn one screenshot/PDF into a question. Shared by
 // "Build from screenshot" (handleAiBuildFile) and "Rapid add" (processRapidJob)
 // so both produce identical-quality questions.
-function _aiBuildQuestionPrompt(isPdf, imageCount) {
+// `levelHint` is ⚡ Rapid add's "Level for this batch". A level is read off the
+// TOPIC in this app, so the only honest way to ask for one is to narrow the
+// topics the model may choose from — there is no level field to ask it for.
+// Blank (every other caller) leaves the prompt exactly as it was: the whole
+// topic list, chosen from freely.
+function _aiBuildQuestionPrompt(isPdf, imageCount, levelHint) {
   const multi = !isPdf && (Number(imageCount) || 1) > 1;
   const n = Number(imageCount) || 1;
-  const topics = currentTopics();
+  const levelTopics = levelHint ? (currentTopicsByLevel()[levelHint] || []) : [];
+  // A level whose topics have all been removed falls back to the full list.
+  // Sending an EMPTY "choose from exactly this list" would leave the model
+  // with nothing to choose and it would invent one.
+  const topics = levelTopics.length ? levelTopics : currentTopics();
   const categories = ['CER', 'Single Relationship', 'Double Relationship', 'Reliability', 'Fairness', 'Accuracy', 'Constant Variable', 'Hypothesis', 'Aim', 'Conclusion', 'Definition', 'Explanation', 'Stating', 'Key Concepts'];
   return `You are helping a Singapore primary-school Chinese teacher turn an exam question (${multi ? `spread across the ${n} attached images` : `in the attached ${isPdf ? 'PDF' : 'image'}`}) into a practice question.\n` +
     SCAN_READING_NOTE +
@@ -9726,6 +9846,9 @@ function _aiBuildQuestionPrompt(isPdf, imageCount) {
     _partsPromptRules() +
     _aiTagsPromptLine() +
     `- Choose topic from EXACTLY this list: ${topics.join('; ')}.\n` +
+    (levelTopics.length
+      ? `- Every question on this page is ${levelHint} level. The topic list above is the complete list of ${levelHint} topics — choose the closest one from it even if a topic you know from another year would fit better.\n`
+      : '') +
     `- Choose category from EXACTLY this list: ${categories.join('; ')}.\n` +
     `- Use plain text only, no markdown.`;
 }
@@ -10296,6 +10419,96 @@ async function _autoFillDiagramFromUpload(mimeType, b64) {
 // dropped straight into Vetting — no editor stop. A live placeholder card
 // shows in the Vetting list while each job runs.
 // =====================================================================
+// ---- The level this BATCH is filed at ------------------------------------
+// An author working through a pile of screenshots is nearly always working
+// through ONE year's paper, and the AI is choosing the topic — and therefore
+// the level — one screenshot at a time with no idea which paper it came from.
+// Saying "these are all P5" once is both less work and more accurate than
+// correcting forty questions in vetting afterwards.
+//
+// A LEVEL IS NOT A FIELD ON A QUESTION HERE. It is read off the topic
+// (`getTopicLevel`), and every surface that cares — the bank filter, the
+// student-level gate, the topic grid — reads it that way. So stamping
+// `q.level` would write a field nothing in this app looks at, and the question
+// would still be served at whatever level its topic belongs to. Choosing a
+// level therefore narrows the list of topics the AI may pick from to that
+// level's topics, and the level follows from the topic exactly as it always
+// has. `_rapidApplyLevel` is the guard for a reply that ignores the list.
+//
+// It lives in sessionStorage, which is the honest lifetime for it: a batch is
+// one sitting, so it survives a reload mid-pile (and the pad being closed and
+// reopened) and is back to "Any level" in a new tab or tomorrow. A level that
+// persisted for a week would be the one an author set last Tuesday and never
+// noticed again, filing a P3 paper as P5.
+const RAPID_LEVEL_KEY = 'zhRapidLevel';
+function rapidLevel() {
+  try {
+    const v = sessionStorage.getItem(RAPID_LEVEL_KEY) || '';
+    return TOPIC_LEVELS.indexOf(v) >= 0 ? v : '';
+  } catch (e) { return ''; }
+}
+function setRapidLevel(v) {
+  const lv = TOPIC_LEVELS.indexOf(v) >= 0 ? v : '';
+  try { sessionStorage.setItem(RAPID_LEVEL_KEY, lv); } catch (e) { /* private mode — the picker still works for this pad */ }
+  _rapidLevelPaint();
+}
+// The options come from TOPIC_LEVELS, never from a list typed into index.html:
+// a level added to the topics and missing from the picker is a level nobody
+// can file at, and one removed leaves a picker offering a level with no topics
+// behind it.
+function _rapidLevelOptions() {
+  const sel = document.getElementById('rapidLevel');
+  if (!sel) return;
+  const cur = rapidLevel();
+  sel.innerHTML =
+    `<option value="">Any level — let the AI choose the topic</option>` +
+    TOPIC_LEVELS.map(lv => `<option value="${escapeHtml(lv)}">${escapeHtml(lv)} — file every question in this batch at ${escapeHtml(lv)}</option>`).join('');
+  sel.value = cur;
+}
+function _rapidLevelPaint() {
+  const lv = rapidLevel();
+  const wrap = document.getElementById('rapidLevelWrap');
+  const note = document.getElementById('rapidLevelNote');
+  const sel = document.getElementById('rapidLevel');
+  if (sel && sel.value !== lv) sel.value = lv;
+  if (wrap) wrap.classList.toggle('on', !!lv);
+  if (note) {
+    const topics = lv ? (currentTopicsByLevel()[lv] || []) : [];
+    note.textContent = lv
+      ? (topics.length
+        ? `Every question added from here is filed at ${lv} — the AI picks its topic from the ${topics.length} ${lv} topic${topics.length > 1 ? 's' : ''} only.`
+        : `${lv} has no topics left, so the AI will choose from all of them.`)
+      : 'Every question is filed at whatever level its topic belongs to, as now.';
+  }
+}
+
+// The guard. The model is TOLD to choose from the level's topics and nearly
+// always does, but a reply that comes back with something else — a topic from
+// another level, or one that is not on any list — must not quietly land at the
+// wrong level after the author said which level this was.
+//
+// The topic is snapped into the level and the question is marked
+// `topicConfidence: 'low'`, which is an existing signal that already draws the
+// "⚠ check topic" badge on the vetting card. That is the honest outcome: the
+// author asked for this level and gets it, and the one thing that had to be
+// guessed — WHICH topic within it — is flagged for the glance it deserves.
+// Never silently keep an off-level topic, and never file at a level with no
+// topics behind it.
+function _rapidApplyLevel(q, level) {
+  if (!q || !level) return q;
+  const inLevel = currentTopicsByLevel()[level] || [];
+  if (!inLevel.length) return q;                       // nothing to file into — leave the AI's own choice alone
+  // A SECOND topic counts too: qLevelNum takes the MAX over both, so a
+  // secondary topic from a higher level would put the question above the level
+  // the author chose while the primary topic looked perfectly right.
+  const t2 = (typeof qSecondaryTopic === 'function') ? qSecondaryTopic(q) : '';
+  if (t2 && inLevel.indexOf(t2) < 0) q.topic2 = '';
+  if (q.topic && inLevel.indexOf(q.topic) >= 0) return q;
+  q.topic = inLevel[0];
+  q.topicConfidence = 'low';
+  return q;
+}
+
 function openRapidAdd() {
   if (!window.__aiReady || !window.__aiReady()) {
     showToast("AI isn't set up yet — add your reCAPTCHA site key in the code", 'info');
@@ -10303,6 +10516,10 @@ function openRapidAdd() {
   }
   if (typeof closeAiBuild === 'function') closeAiBuild();
   document.getElementById('rapidAddOverlay').classList.add('active');
+  // Built at OPEN time, not at module eval: currentTopicsByLevel() reads the
+  // admin's own custom topics, which are loaded at sign-in.
+  _rapidLevelOptions();
+  _rapidLevelPaint();
   _updateRapidCounts();
   const zone = document.getElementById('rapidPasteZone');
   // On a phone, focusing the pad pops the on-screen keyboard over the very
@@ -10418,7 +10635,13 @@ async function _rapidPrepFile(file) {
 
 function startRapidJob(file) {
   const jobId = 'rapid_' + (++_rapidSeq);
-  rapidJobs.unshift({ id: jobId, status: 'processing', title: 'Reading screenshot…', sub: 'AI is reading the question…' });
+  // The batch level is captured HERE, synchronously, as the file is queued —
+  // not read inside the job. _rapidPrepFile re-encodes a phone photo, which
+  // takes real time, and the pad stays open the whole while: an author who
+  // queues a P3 paper and switches the picker to P4 for the next one must not
+  // have the first paper land at P4 because its prep finished second.
+  const level = rapidLevel();
+  rapidJobs.unshift({ id: jobId, status: 'processing', title: 'Reading screenshot…', sub: 'AI is reading the question…', level });
   _updateRapidCounts();
   renderVettingList(); // show the loading card immediately
   // The size guard runs AFTER the shrink, or a phone's own photo is refused for
@@ -10427,12 +10650,12 @@ function startRapidJob(file) {
   _rapidPrepFile(file)
     .then(f => {
       if (f.size > RAPID_MAX_BYTES) throw new Error('that file is too large (max ~18 MB)');
-      return processRapidJob(jobId, f); // fire-and-forget; runs in the background
+      return processRapidJob(jobId, f, level); // fire-and-forget; runs in the background
     })
     .catch(err => _failRapidJob(jobId, err));
 }
 
-async function processRapidJob(jobId, file) {
+async function processRapidJob(jobId, file, batchLevel) {
   try {
     const isPdf = file.type === 'application/pdf';
     const isImg = file.type && file.type.startsWith('image/');
@@ -10449,7 +10672,7 @@ async function processRapidJob(jobId, file) {
     // 改写句子 questions with their model answers do not — and running out does
     // not fail, it TRUNCATES, and _repairAIJson then hands back a valid-looking
     // reply missing its last questions entirely.
-    const raw = await askGeminiVision(_aiBuildQuestionPrompt(isPdf), [{ mimeType: file.type, data: b64 }], { maxOutputTokens: 8192, json: true });
+    const raw = await askGeminiVision(_aiBuildQuestionPrompt(isPdf, 1, batchLevel), [{ mimeType: file.type, data: b64 }], { maxOutputTokens: 8192, json: true });
     const parsed = _parseAIJson(raw);
     const truncated = _aiJsonRepaired;
     const payloads = _aiQuestionPayloads(parsed);
@@ -10460,6 +10683,11 @@ async function processRapidJob(jobId, file) {
     for (let pi = 0; pi < payloads.length; pi++) {
       const payload = payloads[pi];
       const q = buildQuestionFromAi(payload);
+      // The batch's level, applied to EVERY question the page held — a page of
+      // five is five questions at that level, not one. The prompt already
+      // narrowed the topic list; this is the guard for a reply that chose
+      // outside it, and it marks what it had to guess.
+      _rapidApplyLevel(q, batchLevel);
       // The paper's number is the signal that these are separate questions, not
       // part of any of them. The model is told not to keep it; this is the guard
       // for when it does, and it is the exam paper builder's own stripper.
@@ -10532,8 +10760,11 @@ async function processRapidJob(jobId, file) {
     const what = many
       ? `${added.length} separate questions`
       : '"' + (added[0].title || 'question') + '"';
-    _setRapidStatus('✓ Added ' + what + ' to vetting.');
-    showToast('Added ' + what + ' to vetting ✓', 'success');
+    // The level is named back to the author. Filing at a level they chose and
+    // never confirming it is how a whole pile ends up at the wrong one.
+    const at = batchLevel ? ' at ' + batchLevel : '';
+    _setRapidStatus('✓ Added ' + what + at + ' to vetting.');
+    showToast('Added ' + what + at + ' to vetting ✓', 'success');
     if (truncated) {
       showToast('⚠️ The AI ran out of room and its answer was cut short — the LAST question on that page may be missing. Screenshot the rest on its own if so.', 'error');
     }
@@ -10602,7 +10833,7 @@ function _rapidJobCardHtml(job) {
       <div class="qb-card-header">
         <div>
           <div class="qb-card-title" style="display:flex;align-items:center;gap:8px;"><span class="spinner" style="border-color:rgba(74,124,89,.3);border-top-color:var(--primary);"></span>${escapeHtml(job.title || 'Processing…')}</div>
-          <div class="qb-card-meta"><span class="vetting-badge" style="background:var(--primary-light);color:var(--primary);">Processing…</span></div>
+          <div class="qb-card-meta"><span class="vetting-badge" style="background:var(--primary-light);color:var(--primary);">Processing…</span>${job.level ? `<span class="vetting-badge" style="background:var(--accent-blue-light);color:var(--accent-blue);" title="The level this batch is being filed at">📚 ${escapeHtml(job.level)}</span>` : ''}</div>
         </div>
       </div>
       <div class="qb-card-preview" style="color:var(--text-muted);">${escapeHtml(job.sub || 'AI is reading the question and enhancing the image…')}</div>
@@ -37954,7 +38185,12 @@ window.rapidPaste = rapidPaste;
 window.rapidDrop = rapidDrop;
 window.rapidZoneClick = rapidZoneClick;
 window.rapidPickFiles = rapidPickFiles;
+window.setRapidLevel = setRapidLevel;
 window.dismissRapidJob = dismissRapidJob;
+// The subject switcher — its button is an inline onclick, so it needs the
+// module's function on window like every other handler in index.html.
+window.subjectToggle = subjectToggle;
+window.subjectClose = subjectClose;
 window.submitFlag = submitFlag;
 // Flagged Questions (admin)
 window.loadFlaggedQuestions = loadFlaggedQuestions;

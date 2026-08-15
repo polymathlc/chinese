@@ -42,12 +42,15 @@ const cut = (from, to, what) => {
 
 const section = [
   cut('function _aiQuestionPayloads(parsed)', 'function buildQuestionFromAi', 'payload split'),
-  cut('function _aiBuildQuestionPrompt(isPdf, imageCount)', '\n// The lettered-parts rules', 'build prompt'),
+  cut('function _aiBuildQuestionPrompt(isPdf, imageCount, levelHint)', '\n// The lettered-parts rules', 'build prompt'),
   cut('function _partsPromptRules()', '\n// The rectangle-selection', 'parts rules'),
   cut('const EP_LEAD_NUM_RE =', '\n// A bare number needs a separator', 'question numbering'),
   cut('function qPartWalkPlain(html)', '\n// How many line-starts', 'html walk'),
   `
 function currentTopics() { return ['汉语拼音 Hanyu Pinyin', '短文填空 Cloze Passage', '阅读理解 Comprehension']; }
+// ⚡ Rapid add's "Level for this batch" narrows the topic list the prompt
+// offers — a level is read off the TOPIC here, so that is the only lever.
+function currentTopicsByLevel() { return { P3: ['汉语拼音 Hanyu Pinyin'], P4: [], P5: ['短文填空 Cloze Passage'], P6: ['阅读理解 Comprehension'] }; }
 function _genPreamble() { return ''; }
 function _aiTagsPromptLine() { return ''; }
 function _rectangleRules() { return ''; }
