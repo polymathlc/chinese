@@ -105,6 +105,63 @@ cover this app's collections and only those. Run it after touching any path.
 The bank starts EMPTY, deliberately: `users/{uid}/questionsZh` does not exist
 until the first Chinese question is written.
 
+## The subject switcher — four apps, one student (v2.6.0)
+
+`SUBJECT_APPS` / `subject*` (in `app.js`, search `THE SUBJECT SWITCHER`), plus
+`#subjectSwitch` and the `.subject-*` CSS in `index.html`. A pill in the
+**top-right of every page** naming the subject you are in; click it and the
+other three are one tap away.
+
+Polymath teaches four subjects through four separate apps, and they share a
+Firebase project and a sign-in and **nothing else** — four banks, four sets of
+progress, four topic lists. A student taught three of them had one bookmark per
+subject on a school Chromebook, and the subject they never bookmarked is the
+one they stopped using.
+
+- **It is a LINK, not a router.** Four `<a href>`s and no JS navigation: each
+  app stays reachable at its own URL exactly as before, nothing here redirects
+  or gates anything, and middle-click / open-in-new-tab behave the way a
+  student expects — which a `location.href =` handler would quietly break.
+- **The URLs are RELATIVE (`../cer/`), and that is load-bearing.** The four are
+  GitHub Pages project sites — `polymathlc.github.io/{math,english,chinese,cer}`
+  — so they are sibling folders on one host, and a relative hop resolves there,
+  on a local checkout with the four repos side by side, and on a custom domain
+  later, without this file ever naming a host. An absolute
+  `https://polymathlc.github.io/…` works perfectly until the centre moves to a
+  domain of its own and then sends every student back to the old one.
+- **Science lives at `../cer/`** — the repo name, not the subject name. The
+  label and the folder differ on purpose; `../science/` is a 404 for the whole
+  school at once and reads as a link somebody forgot to finish.
+- **`SUBJECT_KEY` says which of the four THIS app is**, and it is the ONE line
+  that differs between the repos — everything else in the block is identical in
+  all four, so a fix copies straight across. `subjectCurrent()` falls back to
+  the first entry, so a `SUBJECT_KEY` naming nothing does not throw: it labels
+  this app "Math" and offers a link back to the app you are already in.
+- **The menu is built from `SUBJECT_APPS`**, never written out in `index.html`,
+  so a subject added to that list appears by editing one line per app.
+- **The current subject is shown and marked, never dropped.** A menu that
+  silently omits where you already are leaves a student unable to tell which
+  app they are looking at. It is a `<div>` rather than an `<a>` — a link back to
+  the page you are on reloads the app and loses whatever was half-typed.
+- **It is turned on from `configureSidebarForRole`**, the one function every
+  signed-in path (admin, employee, student) already goes through, rather than
+  from three call sites that could drift. It is hidden until then, or it floats
+  over the login card belonging to nobody.
+- **`z-index: 150` sits in a deliberate gap**: above the sidebar (100) and every
+  sticky `.page-header` (50) so it is always reachable, and below every modal
+  (`.confirm-overlay` and friends start at 200) so a dialog covers it rather
+  than being covered by it.
+- **`.page-header` gives up its right-hand corner** (`padding-right`), because
+  that is where every page keeps its action buttons and the switcher floats
+  over them. It is fixed to the viewport rather than dropped into a header
+  because this app has no global top bar at all — forty-odd pages carry their
+  own `.page-header`, and a page added next month would be the one that quietly
+  had no switcher on it.
+- The CSS is written against the design tokens and nothing else, so the **same
+  block is used in all four apps** and each paints it in its own palette. A
+  themed copy per app is a copy that drifts.
+- Run **`node tools/subject-level-tests.mjs`** after touching any of it.
+
 ## Keep the page fast — these are load-bearing, do not undo them
 
 - Fonts are ONE non-blocking request (`media="print" onload="this.media='all'"`).
@@ -606,6 +663,55 @@ to drag. The camera and the gallery are the way in there.
   red card a failed read does (`_failRapidJob`, which `processRapidJob`'s own
   catch now calls too). A screenshot that vanished silently reads as one that
   worked.
+
+### 📚 The level a BATCH is filed at (v2.6.0)
+
+`rapidLevel` / `setRapidLevel` / `_rapidApplyLevel` / `_rapidLevelOptions`, and
+the `#rapidLevelWrap` picker above the pad. An author working through a pile of
+screenshots is nearly always working through ONE year's paper, and the AI was
+choosing the topic — and therefore the level — one screenshot at a time with no
+idea which paper it came from. Saying "these are all P5" once is both less work
+and more accurate than correcting forty questions in vetting afterwards.
+
+- **A LEVEL IS NOT A FIELD ON A QUESTION HERE**, and that is the whole design.
+  It is read off the TOPIC (`getTopicLevel`), and every surface that cares — the
+  bank filter, the student-level gate, the topic grid — reads it that way. So
+  stamping `q.level` would write a field nothing in this app looks at, and the
+  question would still be served at whatever level its topic belongs to.
+  Choosing a level instead **narrows the topics the AI may pick from** to that
+  level's, and the level follows from the topic exactly as it always has.
+- **`_aiBuildQuestionPrompt` takes the level as a third argument** and blank —
+  every other caller, including 🤖 Build from screenshot — leaves the prompt
+  byte-for-byte what it was: the whole topic list, chosen from freely.
+- **A level whose topics have all been removed falls back to the full list.**
+  An empty "choose from EXACTLY this list" leaves the model nothing to choose
+  from and it invents a topic instead.
+- **`_rapidApplyLevel` is the guard for a reply that ignored the list**, and it
+  is what makes the promise true. An off-level or unknown topic is snapped into
+  the level and the question is marked **`topicConfidence: 'low'`** — an
+  existing signal that already draws the "⚠ check topic" badge in vetting. The
+  author asked for a level and gets it; the one thing that had to be guessed —
+  WHICH topic within it — is flagged for the glance it deserves.
+- **A SECONDARY topic counts too.** `qLevelNum` takes the MAX over both, so a
+  `topic2` from a higher level puts the question above the level the author
+  chose while the primary topic looks perfectly right.
+- **The level is captured in `startRapidJob`, synchronously, as the file is
+  queued** — never read inside the job. `_rapidPrepFile` re-encodes a phone
+  photo, which takes real time, and the pad stays open the whole while: an
+  author who queues a P3 paper and switches the picker for the next one must
+  not have the first paper land at P4 because its prep finished second. It is
+  carried on the job (and shown on its vetting card) and applied to **every**
+  question the page held — a page of five is five questions at that level.
+- **It lives in `sessionStorage`**, which is the honest lifetime: a batch is one
+  sitting, so it survives a reload mid-pile and is back to "Any level" in a new
+  tab or tomorrow. A level that persisted for a week would be the one an author
+  set last Tuesday and never noticed again, filing a P3 paper as P5.
+- **The options are generated from `TOPIC_LEVELS`**, never typed into
+  `index.html`: a level added to the topics and missing from the picker is a
+  level nobody can file at.
+- The chosen level is **named back in the toast and the status line**. Filing at
+  a level and never confirming it is how a whole pile ends up at the wrong one.
+- Run **`node tools/subject-level-tests.mjs`** after touching any of it.
 
 ## 阅读理解问答 — a passage answered IN WRITING (v2.2.0)
 
@@ -1233,8 +1339,8 @@ reported in chat, to know whether the deploy actually went through.
   named constant used at every call site rather than a string typed out in three
   places, and swapping the model means checking its scale first. The Science app
   (`polymathlc/cer`) carries the same pair — keep the two in step.
-- Run the sixteen harnesses after touching what they cover — every failure they
-  catch is **silent**, with nothing thrown and nothing wrong on screen:
+- Run the seventeen harnesses after touching what they cover — every failure
+  they catch is **silent**, with nothing thrown and nothing wrong on screen:
   - `node tools/answer-key-tests.mjs`
   - `node tools/check-questions-tests.mjs`
   - `node tools/objective-tag-tests.mjs`
@@ -1305,6 +1411,15 @@ reported in chat, to know whether the deploy actually went through.
     an underline lost in transcription — or kept on screen and stripped by the
     print builder — leaves a question that reads perfectly and cannot be
     answered, with four plausible options and no word attached to them.
+  - `node tools/subject-level-tests.mjs` — the subject switcher's four links and
+    ⚡ Rapid add's batch level. A url pointing at the wrong folder does not
+    error, it loads the WRONG subject's app, and `../science/` is a 404 for the
+    whole school (the folder is `cer`). An absolute url is the same failure
+    delayed until the centre moves domain. And the batch level has no field to
+    check itself against — a level is read off the TOPIC here, so if the
+    narrowing stops working the picker still says "filed at P5", the toast
+    still says "at P5", and forty questions land wherever the AI's topic put
+    them.
 
 ### Two CSS traps in `index.html`
 
