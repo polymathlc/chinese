@@ -987,6 +987,58 @@ diagram touched up. So every real deletion in the app is a **move**
   nested arrays, so a table question written to the bin without it fails to save
   at all. Run **`node tools/bin-tests.mjs`** after touching any of it.
 
+## A question is saved when Firestore says so (v2.4.0)
+
+The bin above is careful because deleting is the one action that destroys work.
+It wasn't: **a question could disappear without anyone deleting anything**, and
+that is what this section is about.
+
+Every authoring path grows `questionBank` / `vettingList`, redraws the page and
+says "Question added to bank ✓" **before** the write resolves, then throws the
+result away — `saveQuestion(q); // async, non-blocking` at a dozen call sites.
+So a write that failed left a question on screen, in the bank, in the count,
+searchable and pickable for a worksheet, and in **no database**. It lasted
+exactly as long as the tab. Nothing looked wrong at any point; the question was
+simply not there at the next sign-in.
+
+- **`saveQuestion` and `saveVettingQuestion` are the two doors, and they must
+  stay identical in shape.** Both now build their payload with
+  `_firestoreSafeQuestion`, both return TRUE only when Firestore took it, and
+  both take `opts.quiet` / `opts.noStash`. `saveVettingQuestion` had **neither**
+  the conversion nor a return value, and the missing conversion alone destroyed
+  one whole class of question: Firestore rejects nested arrays, a table block
+  holds array-of-arrays the moment `normalizeLoadedQuestion` has touched it, so
+  every already-loaded table question sent back to vetting was refused — after
+  the bank copy had been deleted. 🚩 Move to vetting, on a question a student
+  flagged, is the path that did it.
+- **A move goes through `moveVettingToBank` / `moveBankToVetting`, and nothing
+  else.** Both follow `binQuestion`'s order: write the destination, WAIT for it,
+  and only then delete the source. Five paths used to do it by hand and all five
+  in the losing order — `saveQuestion(q); deleteVettingDoc(id);`, a write nobody
+  waited for beside a delete that happened regardless. **Auto-Vet ran that pair
+  in a loop over the whole queue**, which is how a batch went at once. Do not add
+  a third mover.
+- **A failed move stashes NOTHING** (`noStash`). There is nothing to rescue —
+  the question is still whole in the collection it was moving out of — and a
+  copy kept on the device would write a SECOND one on the next sign-in, beside
+  the row it never left. The ordering fix would have become a duplicating one.
+- **A failed write is kept on the device and retried** (`_unsaved*`,
+  `zhUnsavedQuestions` in localStorage, retried by `unsavedInit` on every
+  authoring sign-in). The net is INSIDE the two doors, not at the dozen call
+  sites, so an authoring surface added later is covered without knowing it
+  exists. Keyed **per uid** — a stash replayed under the wrong account writes one
+  author's questions into another's bank. `quiet` writes are excluded: the usage
+  backfill and the auto-tagger re-write questions already in the bank, and a
+  queue of those would push the author's real losses off the end of it.
+- **The stash is shown** (`.unsaved-banner`, on the Bank and Vetting pages). A
+  stash nobody is told about only trades a question that vanished for a question
+  sitting in localStorage that nobody knows to retry.
+- **An employee may not write while `adminUid` is null** (`_bankWriteBlocked`).
+  `_bankOwnerUid` falls back to their OWN uid, and a question written there is
+  one nobody ever sees again — not the teacher, not a student, and not the
+  employee, who gets the teacher's bank back the moment the pointer resolves.
+- Run **`node tools/question-persistence-tests.mjs`** after touching any of it.
+
 ## Image touch-up & the transform session
 
 - **Touch up & label** (`_annotXform*`) is ONE session shared by Resize (F),
@@ -1152,12 +1204,19 @@ reported in chat, to know whether the deploy actually went through.
   named constant used at every call site rather than a string typed out in three
   places, and swapping the model means checking its scale first. The Science app
   (`polymathlc/cer`) carries the same pair — keep the two in step.
-- Run the fifteen harnesses after touching what they cover — every failure they
+- Run the sixteen harnesses after touching what they cover — every failure they
   catch is **silent**, with nothing thrown and nothing wrong on screen:
   - `node tools/answer-key-tests.mjs`
   - `node tools/check-questions-tests.mjs`
   - `node tools/objective-tag-tests.mjs`
   - `node tools/learning-gap-tests.mjs`
+  - `node tools/question-persistence-tests.mjs` — whether a question the author
+    was told was saved actually exists. The order of a move (write the
+    destination, wait, then delete the source), `_firestoreSafeQuestion` on both
+    save doors, and the stash that holds a failed write until it can be retried.
+    This is the one failure with nothing on screen to see at all: the question
+    is in the bank, in the count and in the search until the tab closes, and
+    gone at the next sign-in with no error ever shown.
   - `node tools/bin-tests.mjs` — the bin's calendar and stored record, plus the
     `_firestoreSafeQuestion` helper every save shares. A day counted wrong
     purges somebody's question early, in a background sweep, with nothing on

@@ -1706,6 +1706,7 @@ async function enterApp(user) {
     autoTagWholeBankInBackground();
     qPartAutoConvertLater();   // typed "a)" markers -> official parts, once per load
     binInit();                 // sweep anything deleted more than BIN_DAYS ago
+    unsavedInit();             // re-save anything a failed write left on this device
     // Warm the image cache in the background so bank / Doctor / Past Papers
     // images show instantly (non-blocking, idle-scheduled).
     warmImageCacheInBackground(questionBank);
@@ -1738,6 +1739,7 @@ async function enterApp(user) {
     warmImageCacheInBackground(questionBank);
     qPartAutoConvertLater();
     binInit();
+    unsavedInit();             // re-save anything a failed write left on this device
   } else {
     // Student: load admin's question bank
     configureSidebarForRole('student');
@@ -1817,7 +1819,7 @@ async function enterApp(user) {
 
 // App version shown to admins in the sidebar. BUMP THIS on every change you
 // deploy (see CLAUDE.md) so the admin can confirm the latest build is live.
-const APP_VERSION = 'v2.3.0';
+const APP_VERSION = 'v2.4.0';
 // ---- The always-visible session bar ----
 // Staff must never be in any doubt about whose account is being played, so
 // this sits above everything until the session ends.
@@ -11109,7 +11111,7 @@ function saveEditedQuestion() {
 // Edit mode: commit the current edits straight into the Question Bank (the live
 // database students see). If the question is in the vetting list, it's approved
 // out of vetting in the same step — no separate trip back to approve it.
-function saveEditToBank() {
+async function saveEditToBank() {
   if (blocks.length === 0) { showToast('Add some blocks before saving', 'error'); return; }
   if (!currentEditingQuestion) { showToast('No question being edited', 'error'); return; }
   const id = currentEditingQuestion;
@@ -11118,12 +11120,17 @@ function saveEditToBank() {
   carryOverQuestionMeta(q);
   q.status = 'approved';
 
+  // Approving out of vetting is a MOVE, and it happens BEFORE anything on
+  // screen changes: the vetting copy may only go once the bank really has it,
+  // and if it cannot, the editor stays open on the author's work rather than
+  // closing on a save that did not happen. A plain bank edit is not a move and
+  // keeps the old fire-and-forget write, with the stash behind it.
   const wasVetting = vettingList.some(v => v.id === id);
   if (wasVetting) {
+    if (!await moveVettingToBank(q)) { renderVettingList(); return; }
     vettingList = vettingList.filter(v => v.id !== id);
-    // Keep an approved question in its original owner's bank, like approveVetting.
-    if (_ownerUidByVettingId[id]) _ownerUidByQuestionId[id] = _ownerUidByVettingId[id];
   }
+
   const bIdx = questionBank.findIndex(qb => qb.id === id);
   if (bIdx !== -1) questionBank[bIdx] = q; else questionBank.push(q);
   _rapidJustAdded.delete(id);
@@ -11138,8 +11145,7 @@ function saveEditToBank() {
   renderVettingList();
   showToast('Saved to question bank ✓', 'success');
   _afterEditNavigate();
-  saveQuestion(q);                       // upsert into the questions subcollection
-  if (wasVetting) deleteVettingDoc(id);  // remove from the vetting subcollection
+  if (!wasVetting) saveQuestion(q);   // upsert into the questions subcollection
 }
 
 function cancelEdit() {
@@ -11698,6 +11704,7 @@ function renderQuestionBank() {
   if (document.activeElement !== document.getElementById('bankFilterTag')) populateTagFilter();
   const filtered = _bankFilteredQuestions();
   ensureQuestionUsage();   // first admin visit: colour the grid without being asked
+  _unsavedPaint();         // anything a failed write is still holding on this device
   _syncBankViewChrome();
   _renderBankPickBar(filtered);
   container.classList.toggle('as-tiles', bankView === 'grid');
@@ -12226,6 +12233,7 @@ function _vetTimeLabel(q) {
 
 function renderVettingList() {
   const container = document.getElementById('vettingListGrid');
+  _unsavedPaint();   // anything a failed write is still holding on this device
   // Live "processing" / "failed" placeholders from Rapid add, shown on top.
   const jobCards = rapidJobs.map(_rapidJobCardHtml).join('');
 
@@ -12334,25 +12342,32 @@ function _vetFocusScroll() {
   });
 }
 
-function approveVetting(id) {
+async function approveVetting(id) {
   const idx = vettingList.findIndex(q => q.id === id);
   if (idx === -1) return;
   const q = vettingList[idx];
+  const prevStatus = q.status, prevFlag = q._flag, prevDup = q._dupOf;
   q.status = 'approved';
   if (q._flag) { delete q._flag; _resolveFlagsForQuestion(id); } // re-approved a flagged question
   delete q._dupOf;   // the admin has vetted it — drop the duplicate-suspicion marker
+
+  // The lists move only once the bank really has it. Approving used to fire the
+  // write and delete the vetting doc without waiting for either, so a failed
+  // write approved the question out of existence.
+  const ok = await moveVettingToBank(q);
+  if (!ok) {
+    q.status = prevStatus;
+    if (prevFlag) q._flag = prevFlag;
+    if (prevDup) q._dupOf = prevDup;
+    renderVettingList();
+    return;              // moveVettingToBank has already said why
+  }
   questionBank.push(q);
-  vettingList.splice(idx, 1);
+  const now = vettingList.findIndex(v => v.id === id);   // re-found: an await sat in the middle
+  if (now !== -1) vettingList.splice(now, 1);
   renderVettingList();
   updateCounts();
   showToast('Question approved and added to bank', 'success');
-  // If this vetting item belonged to another admin, keep the approved
-  // question in that admin's bank rather than copying it into ours.
-  if (_ownerUidByVettingId[id]) {
-    _ownerUidByQuestionId[id] = _ownerUidByVettingId[id];
-  }
-  saveQuestion(q);       // add to questions subcollection
-  deleteVettingDoc(id);  // remove from vetting subcollection
 }
 
 function deleteVetting(id) {
@@ -12528,28 +12543,39 @@ async function _runAutoVet(queue) {
     (done, total) => _setAutoVetStatus(`Analysing questions… ${done} / ${total}`, done, total));
 
   // 2) Approve every question the AI handled, into the bank.
-  let approved = 0, failed = 0;
-  results.forEach((r, i) => {
+  //
+  // ONE AT A TIME, each waiting for its own write. This loop used to fire the
+  // save and the vetting delete off unawaited for the whole queue, so a
+  // connection that dropped part-way through an auto-vet of forty questions
+  // deleted them from vetting, never wrote them to the bank, and reported all
+  // forty approved — the batch of "questions that just disappeared".
+  let approved = 0, failed = 0, unwritten = 0;
+  for (let i = 0; i < results.length; i++) {
+    const r = results[i];
     const q = queue[i];
-    if (!r || !r.ok) { failed++; if (r) console.error('auto-vet failed for', q && q.id, r.error); return; }
+    if (!r || !r.ok) { failed++; if (r) console.error('auto-vet failed for', q && q.id, r.error); continue; }
     const idx = vettingList.findIndex(v => v.id === q.id);
-    if (idx === -1) return;
+    if (idx === -1) continue;
+    const prevStatus = q.status;
     q.status = 'approved';
+    if (!(await moveVettingToBank(q))) { q.status = prevStatus; unwritten++; continue; }
     questionBank.push(q);
-    vettingList.splice(idx, 1);
-    // Keep an approved question under its original admin's namespace.
-    if (_ownerUidByVettingId[q.id]) _ownerUidByQuestionId[q.id] = _ownerUidByVettingId[q.id];
-    saveQuestion(q);        // async, retries internally
-    deleteVettingDoc(q.id); // remove from the vetting subcollection
+    const now = vettingList.findIndex(v => v.id === q.id);   // re-found after the await
+    if (now !== -1) vettingList.splice(now, 1);
     approved++;
-  });
+    _setAutoVetStatus(`Approving into the bank… ${approved} / ${results.length}`, i + 1, results.length);
+  }
 
   renderVettingList();
   renderQuestionBank();
   updateCounts();
-  _finishAutoVetModal(approved, failed);
+  _finishAutoVetModal(approved, failed + unwritten);
   if (approved) showToast(`Auto-vetted ${approved} question${approved === 1 ? '' : 's'} into the bank ✓`, 'success');
   if (failed) showToast(`${failed} question${failed === 1 ? '' : 's'} could not be processed — left in vetting`, 'error');
+  // Told apart from the AI failures on purpose: these were vetted fine and it
+  // was the DATABASE that would not take them. They are still in vetting, and
+  // the stash will retry them, so the answer is "try again", not "re-vet".
+  if (unwritten) showToast(`${unwritten} question${unwritten === 1 ? '' : 's'} could not be written to the bank — still in vetting, nothing lost`, 'error');
 
   if (btn) btn.disabled = false;
   _autoVetRunning = false;
@@ -18119,12 +18145,179 @@ function _setSaveStatus(state) {
   }
 }
 
+// =====================================================================
+// ⚠ QUESTIONS THAT NEVER LANDED — the write nobody waited for  (v2.4.0)
+//
+// Every add path in this file grows `questionBank` / `vettingList`, redraws the
+// page and says "Question added to bank ✓" BEFORE the Firestore write resolves,
+// and then never looks at the result — `saveQuestion(q); // async, non-blocking`
+// appears at a dozen call sites. So a write that failed (a centre laptop off
+// the wifi for ten seconds, a rules change, a document Firestore refused) left
+// a question that was on screen, in the bank, in the count, searchable and
+// pickable for a worksheet, and in NO database. It survived exactly as long as
+// the tab did. Nothing was ever shown to be wrong; the question was simply not
+// there on the next sign-in — which is the "my questions keep disappearing"
+// this block exists to end.
+//
+// The net goes INSIDE the two save doors rather than at the dozen call sites,
+// for the reason every other hook in this file is one hook: an authoring
+// surface added later is covered without knowing this exists.
+//
+// A question whose write failed is stashed in localStorage and retried on the
+// next sign-in. It fits: a question is a few KB of text — every picture is a
+// Storage URL, never base64 — so the stash is small even at its cap.
+//
+// `quiet` writes are deliberately NOT stashed. The usage backfill and the
+// auto-tagger walk the whole bank re-writing questions that are already in it,
+// so stashing those would build a queue of housekeeping nobody is missing, and
+// push the author's real losses off the end of it.
+// =====================================================================
+const UNSAVED_KEY = 'zhUnsavedQuestions';   // ...Zh, like every other name here
+const UNSAVED_MAX = 40;
+
+// Per ACCOUNT. Two teachers share a centre laptop, and a stash replayed under
+// the wrong uid would write one author's questions into the other's bank —
+// exactly the kind of silent cross-contamination the collection names exist to
+// prevent, arriving through localStorage instead.
+function _unsavedKey() { return UNSAVED_KEY + ':' + ((currentUser && currentUser.uid) || 'anon'); }
+
+function _unsavedRead() {
+  try {
+    const list = JSON.parse(localStorage.getItem(_unsavedKey()) || '[]');
+    return Array.isArray(list) ? list.filter(r => r && r.q && r.q.id != null) : [];
+  } catch (e) { return []; }
+}
+
+function _unsavedWrite(list) {
+  try {
+    localStorage.setItem(_unsavedKey(), JSON.stringify(list.slice(0, UNSAVED_MAX)));
+    return true;
+  } catch (e) {
+    // Quota, or a browser in private mode with no storage at all. Nothing more
+    // can be done from here, and throwing would take down the save path that
+    // called it — which is the one thing worse than not having the net.
+    console.warn('unsaved stash', e);
+    return false;
+  }
+}
+
+// Keep a question whose write failed. The SAME id twice is one entry: a retry
+// that fails again must not grow the stash a copy at a time.
+//
+// It is stored Firestore-safe, because that is the shape that has to go back
+// out — and a question holding a table's nested arrays could not be re-written
+// from the stash at all.
+function _unsavedKeep(q, where) {
+  if (!q || q.id == null) return;
+  const id = String(q.id);
+  const list = _unsavedRead().filter(r => String(r.q.id) !== id);
+  list.unshift({
+    q: JSON.parse(JSON.stringify(_firestoreSafeQuestion(q))),
+    where: where === 'vetting' ? 'vetting' : 'bank',
+    at: new Date().toISOString(),
+  });
+  _unsavedWrite(list);
+  _unsavedPaint();
+}
+
+// Dropped on ANY successful write of that id, quiet ones included: the question
+// is in the database now, however it got there.
+function _unsavedDrop(id) {
+  if (id == null) return;
+  const list = _unsavedRead();
+  const left = list.filter(r => String(r.q.id) !== String(id));
+  if (left.length !== list.length) { _unsavedWrite(left); _unsavedPaint(); }
+}
+
+function _unsavedCount() { return _unsavedRead().length; }
+
+// Retried on the next sign-in and from the banner's button. QUIET: replaying a
+// write that failed last week is not work done today, and it must not be logged
+// against this session as a question written a second time.
+async function _unsavedRetryAll() {
+  const list = _unsavedRead();
+  if (!list.length) return { ok: 0, left: 0 };
+  let ok = 0;
+  for (const rec of list) {
+    const q = normalizeLoadedQuestion(JSON.parse(JSON.stringify(rec.q)));
+    const vetting = rec.where === 'vetting';
+    const landed = vetting ? await saveVettingQuestion(q, { quiet: true })
+                           : await saveQuestion(q, { quiet: true });
+    if (!landed) continue;                       // stays stashed for the next try
+    ok++;
+    // The other windows are told by hand — a quiet write does not announce
+    // itself, and this one really did change the bank.
+    _xtAnnounceQuestion(q.id, vetting ? 'vetting' : 'bank', 'save');
+    const live = vetting ? vettingList : questionBank;
+    if (!live.some(x => x && String(x.id) === String(q.id))) {
+      if (vetting) live.unshift(q); else live.push(q);
+    }
+  }
+  if (ok) {
+    updateCounts();
+    try { populateTopicFilter(); } catch (e) {}
+    try { if (document.querySelector('#page-bank.active')) renderQuestionBank(); } catch (e) {}
+    try { if (document.querySelector('#page-vetting.active')) renderVettingList(); } catch (e) {}
+  }
+  _unsavedPaint();
+  return { ok, left: _unsavedCount() };
+}
+
+// The banner on the Bank and Vetting pages. A stash the author never sees is
+// only half the fix — it would trade a question that vanished for a question
+// sitting in localStorage that nobody knows to retry.
+function _unsavedPaint() {
+  const n = _unsavedCount();
+  document.querySelectorAll('.unsaved-banner').forEach(el => {
+    if (!n || !_canAuthor()) { el.style.display = 'none'; el.innerHTML = ''; return; }
+    el.style.display = '';
+    el.innerHTML = `
+      <div class="unsaved-banner-body">
+        <div class="unsaved-banner-text">
+          <strong>${n} question${n === 1 ? '' : 's'} ${n === 1 ? 'has' : 'have'} not been saved to the database.</strong>
+          <span>The write did not go through — usually a connection that dropped. ${n === 1 ? 'It is' : 'They are'} kept on this device and retried each time you sign in, so nothing is lost.</span>
+        </div>
+        <button type="button" class="btn btn-primary" onclick="unsavedRetryNow(this)">↻ Try saving ${n === 1 ? 'it' : 'them'} now</button>
+      </div>`;
+  });
+}
+
+async function unsavedRetryNow(btn) {
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+  const { ok, left } = await _unsavedRetryAll();
+  if (ok && !left) showToast(`Saved ${ok} question${ok === 1 ? '' : 's'} ✓`, 'success');
+  else if (ok) showToast(`Saved ${ok}; ${left} still could not be written — check your connection`, 'error');
+  else showToast('Still could not save — check your connection and try again', 'error');
+}
+
+// Retried once on sign-in, out of the way of first paint — and silent when
+// there is nothing to do, which is almost always.
+const UNSAVED_RETRY_DELAY = 3500;
+function unsavedInit() {
+  if (!_canAuthor()) return;
+  _unsavedPaint();
+  if (!_unsavedCount()) return;
+  setTimeout(async () => {
+    const { ok, left } = await _unsavedRetryAll();
+    if (ok) showToast(`Recovered ${ok} question${ok === 1 ? '' : 's'} that had not been saved ✓`, 'success');
+    if (left) showToast(`${left} question${left === 1 ? '' : 's'} still ${left === 1 ? 'is' : 'are'} not saved — see the banner on the Question Bank page`, 'error');
+  }, UNSAVED_RETRY_DELAY);
+}
+
 // Write one question doc with auto-retry.
 // opts.quiet — background bookkeeping (the usage backfill): no toast, no save
 // indicator, no retry. A housekeeping write that fails is the app's problem to
 // log, never a popup in the admin's face.
+// opts.noStash — a failed MOVE, which has nothing to rescue: the question is
+// still whole in the collection it was moving out of, so keeping a copy on the
+// device would write a SECOND one on the next sign-in. See moveVettingToBank.
+//
+// Returns TRUE only when Firestore took it. Every caller that moves a question
+// — vetting → bank, bank → vetting — must wait for that before deleting the
+// copy it is moving away from; see moveVettingToBank / moveBankToVetting.
 async function saveQuestion(q, opts) {
   if (!currentUser) return false;
+  if (_bankWriteBlocked()) { if (!(opts && opts.noStash)) _unsavedKeep(q, 'bank'); return false; }
   // Ai-nstein caches a searchable string per question (tags, title, topic, body).
   // An edit here — a tag added or removed above all — must not leave him matching
   // against the old one for the rest of the session.
@@ -18147,6 +18340,9 @@ async function saveQuestion(q, opts) {
   while (attempts < tries) {
     try {
       await setDoc(_qRef(q.id), payload);
+      // It is really in the database now, so it is no longer waiting to be
+      // recovered — whichever write finally got it there.
+      _unsavedDrop(q.id);
       // A running work session logs the question. `quiet` writes are background
       // bookkeeping (the usage backfill, auto-tagging, the part converter) —
       // machine housekeeping is not work the author did.
@@ -18164,8 +18360,11 @@ async function saveQuestion(q, opts) {
       if (fatal || attempts >= tries) {
         if (!quiet) {
           console.error('saveQuestion failed:', err);
+          // Kept on the device and retried on the next sign-in, so a question
+          // the author was told was added cannot quietly cease to exist.
+          if (!(opts && opts.noStash)) _unsavedKeep(q, 'bank');
           showToast(fatal ? '⚠ You don\'t have permission to change that question'
-                          : '⚠ Could not save question — check your connection', 'error');
+                          : '⚠ Could not save question — it is kept on this device and will be saved when you are back online', 'error');
         }
         _saveQuestionLastError = (err && err.code) || 'unknown';
         return done(false);
@@ -18177,33 +18376,57 @@ async function saveQuestion(q, opts) {
 }
 let _saveQuestionLastError = '';
 
-// Write one vetting doc with auto-retry
-async function saveVettingQuestion(q) {
-  if (!currentUser) return;
-  const wkLog = _wkSuppress === 0;   // see saveQuestion — decided before the await
-  _inflightOps++;
-  _setSaveStatus('saving');
+// Write one vetting doc with auto-retry. Mirrors saveQuestion exactly, and it
+// has to — the two are the only doors a committed question goes through.
+//
+// It went through `_firestoreSafeQuestion` for the first time in v2.4.0, and
+// its absence was a silent destroyer of exactly one kind of question. Firestore
+// REJECTS nested arrays; a table block holds its cells as array-of-arrays the
+// moment normalizeLoadedQuestion has touched it, so every already-loaded table
+// question sent to vetting — 🚩 Move to vetting from a student's flag is the
+// path that does it — failed the write three times over and was deleted from
+// the bank anyway. saveQuestion and binQuestion had the conversion; this one
+// did not, and nothing on screen said so.
+//
+// opts.quiet — see saveQuestion. Returns TRUE only when Firestore took it.
+async function saveVettingQuestion(q, opts) {
+  if (!currentUser) return false;
+  if (_bankWriteBlocked()) { if (!(opts && opts.noStash)) _unsavedKeep(q, 'vetting'); return false; }
+  const quiet = !!(opts && opts.quiet);
+  const wkLog = !quiet && _wkSuppress === 0;   // see saveQuestion — decided before the await
+  const tries = quiet ? 1 : 3;
+  if (!quiet) { _inflightOps++; _setSaveStatus('saving'); }
+  const done = ok => {
+    if (quiet) return ok;
+    _inflightOps--;
+    if (_inflightOps === 0) _setSaveStatus(ok ? 'saved' : 'error');
+    return ok;
+  };
+  const payload = _firestoreSafeQuestion(q);
   let attempts = 0;
-  while (attempts < 3) {
+  while (attempts < tries) {
     try {
-      await setDoc(_vRef(q.id), q);
+      await setDoc(_vRef(q.id), payload);
+      _unsavedDrop(q.id);
       if (wkLog) _wkLogQuestion(q, 'vetting');
-      _xtAnnounceQuestion(q.id, 'vetting', 'save');
-      _inflightOps--;
-      if (_inflightOps === 0) _setSaveStatus('saved');
-      return;
+      if (!quiet) _xtAnnounceQuestion(q.id, 'vetting', 'save');
+      return done(true);
     } catch (err) {
       attempts++;
-      if (attempts >= 3) {
-        _inflightOps--;
-        if (_inflightOps === 0) _setSaveStatus('error');
-        console.error('saveVettingQuestion failed after 3 attempts:', err);
-        showToast('⚠ Could not save question — check your connection', 'error');
-        return;
+      const fatal = err && (err.code === 'permission-denied' || err.code === 'unauthenticated');
+      if (fatal || attempts >= tries) {
+        if (!quiet) {
+          console.error('saveVettingQuestion failed:', err);
+          if (!(opts && opts.noStash)) _unsavedKeep(q, 'vetting');
+          showToast(fatal ? '⚠ You don\'t have permission to add that question'
+                          : '⚠ Could not save question — it is kept on this device and will be saved when you are back online', 'error');
+        }
+        return done(false);
       }
       await new Promise(r => setTimeout(r, 800 * attempts));
     }
   }
+  return done(false);
 }
 
 // Delete one question doc (fire-and-forget; failure is non-critical)
@@ -18220,6 +18443,73 @@ function deleteVettingDoc(id) {
   deleteDoc(_vRef(id))
     .then(() => _xtAnnounceQuestion(id, 'vetting', 'del'))
     .catch(err => console.warn('deleteVettingDoc:', err));
+}
+
+// =====================================================================
+// MOVING A QUESTION BETWEEN THE TWO COLLECTIONS  (v2.4.0)
+//
+// A question approved out of vetting, or sent back to it, is a MOVE: written
+// to one collection and deleted from the other. Five paths did it, and all
+// five did it in the one order that can destroy the question —
+//
+//     saveQuestion(q);       // async, nobody waiting, result thrown away
+//     deleteVettingDoc(id);  // fires immediately, whatever happened above
+//
+// — or, moving the other way, deleted the bank copy FIRST and then wrote the
+// vetting one. Either way a failed write left the question deleted from where
+// it was and never written to where it was going. It stayed in the in-memory
+// list, so the bank looked right, the count looked right, and the toast said
+// "approved and added to bank"; it was gone at the next sign-in. Auto-Vet ran
+// that same pair in a loop over the whole queue, which is how a batch of them
+// went at once.
+//
+// So there are exactly TWO doors, and both follow the order binQuestion has
+// always used: write the destination, WAIT for it, and only then delete the
+// source. A destination that would not take it leaves the question exactly
+// where it was — which is the state the author wants least badly of the two.
+// Do not add a third mover.
+// =====================================================================
+
+// vetting → bank. Returns true only if the question is really in the bank now.
+async function moveVettingToBank(q) {
+  if (!q || q.id == null || !currentUser) return false;
+  // Keep an approved question under its original admin's namespace, or the
+  // super admin's approval would copy another admin's question into their own
+  // bank and leave two of it. Set BEFORE the write — _qRef reads this map.
+  if (_ownerUidByVettingId[q.id]) _ownerUidByQuestionId[q.id] = _ownerUidByVettingId[q.id];
+  // noStash: nothing to rescue. saveQuestion has already said it failed, and
+  // the vetting doc is untouched — the question is still whole, exactly where
+  // the author left it. Keeping a copy on the device would write a SECOND one
+  // into the bank on the next sign-in, beside the vetting row it never left.
+  const ok = await saveQuestion(q, { noStash: true });
+  if (!ok) {
+    if (_ownerUidByVettingId[q.id]) delete _ownerUidByQuestionId[q.id];
+    return false;
+  }
+  try {
+    await deleteDoc(_vRef(q.id));
+    _xtAnnounceQuestion(q.id, 'vetting', 'del');
+  } catch (err) {
+    // The bank copy is the one that matters and it landed. A vetting row left
+    // behind is visible, obvious and one tap to clear — unlike the question
+    // this ordering exists to stop losing.
+    console.warn('move to bank: vetting copy not cleared', err);
+  }
+  return true;
+}
+
+// bank → vetting. Same order, same reasoning, the other way round.
+async function moveBankToVetting(q) {
+  if (!q || q.id == null || !currentUser) return false;
+  const ok = await saveVettingQuestion(q, { noStash: true });   // see moveVettingToBank
+  if (!ok) return false;
+  try {
+    await deleteDoc(_qRef(q.id));
+    _xtAnnounceQuestion(q.id, 'bank', 'del');
+  } catch (err) {
+    console.warn('move to vetting: bank copy not cleared', err);
+  }
+  return true;
 }
 
 // =====================================================================
@@ -19811,6 +20101,23 @@ function _navAllowed(page) {
 function _bankOwnerUid() {
   if (_isEmployee() && adminUid) return adminUid;
   return currentUser ? currentUser.uid : null;
+}
+
+// An employee has no bank of their own — `_bankOwnerUid` points every read and
+// write at the teacher's subtree. While `adminUid` is still null it falls back
+// to the employee's OWN uid, and a question written there is one nobody ever
+// sees again: not the teacher, not a student, and not the employee either, who
+// gets the teacher's bank back the moment the pointer does resolve. Refusing
+// the write keeps it on the device instead, where the stash retries it.
+//
+// Reads are left alone deliberately: an empty bank page is confusing, but it is
+// not a question written into a subtree nothing will ever look at.
+function _bankWriteBlocked() {
+  if (_isEmployee() && !adminUid) {
+    showToast('⚠ The teacher\'s question bank has not loaded — reload the page before saving, so your work goes to the right place', 'error');
+    return true;
+  }
+  return false;
 }
 
 function _adminAnswerToolHtml(containerSel, oidx, model) {
@@ -29778,7 +30085,7 @@ function deleteScheduledQuestion(docId) {
 // =====================================================================
 // MOVE EDITED QUESTION TO VETTING (Admin)
 // =====================================================================
-function moveEditToVetting() {
+async function moveEditToVetting() {
   if (blocks.length === 0) {
     showToast('Add some blocks before saving', 'error');
     return;
@@ -29787,27 +30094,27 @@ function moveEditToVetting() {
     showToast('No question being edited', 'error');
     return;
   }
+  const id = currentEditingQuestion;
   const q = collectQuestionData();
-  q.id = currentEditingQuestion;
+  q.id = id;
   carryOverQuestionMeta(q);
-
-  // Remove from question bank if it was there
-  const qIdx = questionBank.findIndex(qb => qb.id === currentEditingQuestion);
-  if (qIdx !== -1) {
-    questionBank.splice(qIdx, 1);
-    deleteQuestionDoc(currentEditingQuestion);
-  }
-
-  // Remove from vetting if already there (will re-add)
-  const vIdx = vettingList.findIndex(v => v.id === currentEditingQuestion);
-  if (vIdx !== -1) {
-    vettingList.splice(vIdx, 1);
-  }
-
-  // Add to vetting
   q.status = 'pending';
+
+  const wasInBank = questionBank.some(qb => qb.id === id);
+  if (wasInBank) {
+    // The vetting copy is written and CONFIRMED before the bank copy goes. This
+    // used to delete the bank doc first and write vetting unawaited, so a failed
+    // write took the question out of the bank and put it nowhere.
+    if (!await moveBankToVetting(q)) return;   // saveVettingQuestion has said why
+    questionBank = questionBank.filter(qb => qb.id !== id);
+  } else {
+    if (!await saveVettingQuestion(q)) return;
+  }
+
+  // Replace any copy already sitting in vetting
+  const vIdx = vettingList.findIndex(v => v.id === id);
+  if (vIdx !== -1) vettingList.splice(vIdx, 1);
   vettingList.push(q);
-  saveVettingQuestion(q);
 
   currentEditingQuestion = null;
   setEditMode(false);
@@ -30008,20 +30315,36 @@ function flagEditQuestion(flagDocId, questionId) {
 async function flagMoveToVetting(flagDocId, questionId) {
   // Move the question from bank to vetting — an explicit admin choice, carrying
   // the student's flag note so it shows on the vetting card.
+  //
+  // This is the path that found the missing `_firestoreSafeQuestion` in
+  // saveVettingQuestion: the question comes straight out of `questionBank`, so
+  // a table block holds the nested arrays normalizeLoadedQuestion restored, the
+  // vetting write was refused every time — and the bank doc had already been
+  // deleted. A flagged table question was reported by a student and destroyed
+  // by the teacher's fix for it.
   const qIdx = questionBank.findIndex(qb => qb.id === questionId);
   if (qIdx !== -1) {
     const q = questionBank[qIdx];
     const f = flaggedQuestions.find(x => x._docId === flagDocId);
+    const prevStatus = q.status, prevVetted = q.vettedAt;
     q.status = 'flagged';
     if (f) q._flag = _flagInfo(f);
     q.vettedAt = new Date().toISOString();   // it re-enters vetting now, regardless of when it was first created
-    questionBank.splice(qIdx, 1);
-    vettingList.unshift(q);
-    deleteQuestionDoc(questionId);
-    saveVettingQuestion(q);
-    updateCounts();
-    if (document.querySelector('#page-vetting.active')) renderVettingList();
-    showToast('Question moved to vetting list', 'success');
+    if (await moveBankToVetting(q)) {
+      questionBank = questionBank.filter(qb => qb.id !== questionId);
+      vettingList.unshift(q);
+      updateCounts();
+      if (document.querySelector('#page-vetting.active')) renderVettingList();
+      if (document.querySelector('#page-bank.active')) renderQuestionBank();
+      showToast('Question moved to vetting list', 'success');
+    } else {
+      // It never left the bank. Put the flag markings back so the card does not
+      // claim a move that did not happen.
+      q.status = prevStatus;
+      q.vettedAt = prevVetted;
+      delete q._flag;
+      return;   // the flag stays open — there is still something to act on
+    }
   } else {
     showToast('Question is already in vetting or not found', 'info');
   }
@@ -37297,6 +37620,7 @@ window.binClose = binClose;
 window.binRestoreClick = binRestoreClick;
 window.binForgetClick = binForgetClick;
 window.binEmpty = binEmpty;
+window.unsavedRetryNow = unsavedRetryNow;   // the banner's button — inline onclick
 window.setBankView = setBankView;
 window.toggleBankTopicMenu = toggleBankTopicMenu;
 window.toggleBankTopic = toggleBankTopic;
