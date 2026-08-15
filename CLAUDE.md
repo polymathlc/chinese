@@ -578,6 +578,35 @@ asks for.
   last questions. `_aiJsonRepaired` is what warns the author instead.
 - Run **`node tools/rapid-split-tests.mjs`** after touching any of it.
 
+### ⚡ Rapid add on a PHONE (v2.5.0)
+
+The pad was a paste target and nothing else, so on a phone it was **a box that
+could not be filled**: no Ctrl/⌘+V, nothing on the clipboard to paste, nothing
+to drag. The camera and the gallery are the way in there.
+
+- **`(pointer: coarse)` is the whole gate**, in the CSS (`.rapid-desk` /
+  `.rapid-touch`) and in `_rapidTouch()` for the JS half. On a mouse the pad is
+  the box it always was — same wording, same paste, same drop — and a
+  touchscreen laptop driven by a trackpad reports a FINE pointer, so it keeps
+  the paste pad too.
+- **Both routes end at `startRapidJob`**, the ONE queue entry point, so a photo
+  is read, cropped and filed exactly as a pasted screenshot is. Do not give the
+  phone its own pipeline.
+- **The picker's `value` is cleared BEFORE the files are queued.** An `<input
+  type=file>` still holding last time's file fires no `change` for the same
+  photo picked twice, so the second tap does nothing at all — a button that
+  looks like it works and does not.
+- **An oversized photo is SHRUNK, not refused** (`_rapidPrepFile`,
+  `RAPID_PHOTO_MAX_SIDE`). A 12 MP camera photo is several times the size guard,
+  so the guard alone refused the phone route for being the phone route. It only
+  touches an image over `RAPID_SHRINK_OVER` (4 MB) — a pasted screenshot never
+  reaches that and comes through byte-for-byte — and it re-encodes as **JPEG,
+  never PNG**, or a photograph comes out bigger than it went in.
+- **The size check runs AFTER the shrink**, and a failure there files the same
+  red card a failed read does (`_failRapidJob`, which `processRapidJob`'s own
+  catch now calls too). A screenshot that vanished silently reads as one that
+  worked.
+
 ## 阅读理解问答 — a passage answered IN WRITING (v2.2.0)
 
 The B组 of the paper: one 短文, then Q34–Q40 answered in sentences, each with a
