@@ -140,6 +140,7 @@ node tools/objective-tag-tests.mjs     # a lost tag throws nothing
 node tools/bank-isolation-tests.mjs    # a shared bank looks like a filter bug
 node tools/pinyin-ime-tests.mjs        # the wrong character, typed and saved
 node tools/clozemcq-tests.mjs          # 短文填空 keyed to the wrong option
+node tools/question-persistence-tests.mjs   # a saved question that was never written
 ```
 
 **Bump `APP_VERSION` in `app.js` on every change.** It renders in the sidebar

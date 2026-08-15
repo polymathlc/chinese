@@ -1776,6 +1776,34 @@ option {
 .bank-pick-count { font-size: 0.88rem; font-weight: 700; color: var(--primary); }
 .btn.btn-sm { padding: 7px 14px; font-size: 0.82rem; }
 
+/* ⚠ Questions a failed write left on this device (see _unsavedPaint in app.js).
+   Amber, not red: nothing has been lost — the work is held here and retried —
+   so this is a "do something when you can", not an error. */
+.unsaved-banner {
+  max-width: 900px;
+  margin: 0 0 18px;
+  padding: 18px 22px;
+  border: 1.5px solid #e0b768;
+  border-radius: 12px;
+  background: #fdf6e8;
+}
+.unsaved-banner-body {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  flex-wrap: wrap;
+}
+.unsaved-banner-text {
+  flex: 1;
+  min-width: 260px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  line-height: 1.6;
+}
+.unsaved-banner-text strong { font-size: 0.95rem; color: #7a5410; }
+.unsaved-banner-text span { font-size: 0.85rem; color: #8a6520; }
+
 .question-bank-grid.as-tiles {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
@@ -7162,6 +7190,9 @@ body.zhime-field .zhime-pill, .zhime-pill.on { display: inline-flex; }
             </button>
           </div>
         </div>
+        <!-- Questions a failed write left on this device. Painted by _unsavedPaint();
+             hidden whenever the stash is empty, which is almost always. -->
+        <div class="unsaved-banner" style="display:none;"></div>
         <div class="bank-pick-bar" id="bankPickBar" style="display:none;"></div>
         <div class="question-bank-grid" id="questionBankGrid"></div>
       </div>
@@ -7188,6 +7219,7 @@ body.zhime-field .zhime-pill, .zhime-pill.on { display: inline-flex; }
             <input id="vettingSearch" placeholder="Search words or \"phrases\" in title/content..." oninput="renderVettingList()">
           </div>
         </div>
+        <div class="unsaved-banner" style="display:none;"></div>
         <div class="question-bank-grid" id="vettingListGrid"></div>
       </div>
     </div>
