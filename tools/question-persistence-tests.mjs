@@ -381,7 +381,10 @@ test('every path that moves a question uses one of the two doors', () => {
   const movers = {
     approveVetting: 'moveVettingToBank',
     _runAutoVet: 'moveVettingToBank',
-    saveEditToBank: 'moveVettingToBank',
+    // The Save-to-bank BUTTON is `saveEditToBank`; the move itself lives in
+    // `_saveEditToBankConfirmed`, on the far side of the duplicate prompt.
+    // The next case is what pins the two together.
+    _saveEditToBankConfirmed: 'moveVettingToBank',
     moveEditToVetting: 'moveBankToVetting',
     flagMoveToVetting: 'moveBankToVetting',
   };
@@ -390,6 +393,25 @@ test('every path that moves a question uses one of the two doors', () => {
     ok(b.indexOf('await ' + door) >= 0, fn + ' must move through ' + door);
     ok(!/\n\s*deleteVettingDoc\(/.test(b), fn + ' must not delete a vetting doc by hand');
     ok(!/\n\s*deleteQuestionDoc\(/.test(b), fn + ' must not delete a bank doc by hand');
+  });
+});
+
+test('the duplicate prompt sits in FRONT of a door, never instead of one', () => {
+  // Every editor save now passes a possible-duplicate question to the author
+  // before it is written. That gate must be a pass-through: the save it guards
+  // has to end at the same door it always did, or "Save anyway" would write
+  // through a path with none of the ordering guarantees behind it.
+  const gates = {
+    saveEditToBank: '_saveEditToBankConfirmed',
+    saveEditedQuestion: '_saveEditedQuestionConfirmed',
+    addToVetting: '_addToVettingConfirmed',
+  };
+  Object.entries(gates).forEach(([fn, tail]) => {
+    const b = body(fn);
+    ok(/_dupGateSave\(/.test(b), fn + ' must ask about a duplicate before it saves');
+    ok(b.indexOf(tail) > b.indexOf('_dupGateSave('), fn + ' must reach ' + tail + ' through the gate');
+    ok(!/await (saveQuestion|saveVettingQuestion|moveVettingToBank)\(/.test(b),
+       fn + ' must not write anything itself — the gate may still be answered "no"');
   });
 });
 
