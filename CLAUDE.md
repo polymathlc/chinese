@@ -1061,6 +1061,58 @@ and a vetting list nobody clears is one nobody reads either.
   bank, where deleting *is* a move to the bin.
 - Run **`node tools/vetting-bulk-delete-tests.mjs`** after touching any of it.
 
+## "You may already have this one" — the duplicate warning (v2.8.0)
+
+`findDuplicateCandidate` / `checkEditorDuplicate` / `dupWatchKick` /
+`_dupGateSave` (in `app.js`, search `THE DUPLICATE WATCH`), plus the
+`#dupWarnBanner` at the top of the question editor and the 🟡 badge on a
+vetting card.
+
+The matcher itself is old: a token-overlap (Jaccard) score over the title, the
+body and the MCQ options, past `DUP_MIN_SCORE` (0.7). What was missing was
+everywhere it was not being asked.
+
+- **It used to be raised from ONE place — straight after 🤖 Build from
+  screenshot.** So a question TYPED into the block editor, pasted, built by the
+  passage builder, or opened and reworked was checked against nothing at all,
+  and the only duplicate warning in the app was a badge on a Rapid add card.
+  The bank fills up with the same question twice and nothing anywhere says so.
+- **The banner is LIVE.** `dupWatchKick` re-checks as the author works, so the
+  warning is on screen while there is still something to do about it. The
+  listener is **ONE delegated pair on `#page-create`**, for the reason the 拼音
+  IME's is: this app builds the editor's DOM continuously, so anything bound
+  per element covers the fields that existed when it ran and silently misses
+  every one made afterwards. **`renderBlocks` kicks it too** — a builder writing
+  blocks programmatically fires no `input` event at all.
+- **The SAVE asks as well, and that is the backstop.** A banner sits at the top
+  of a long editor and the Save button is at the bottom, so `_dupGateSave` is on
+  all three editor saves — ✅ Add to vetting, 💾 Save, and Save straight to the
+  bank. It is a **PROMPT, never a block**: only the author can tell a real
+  duplicate from two questions that merely share a stem, so "Save anyway" is
+  always there.
+- **The gate is a PASS-THROUGH, never a second write path.** Each save function
+  keeps its body in a `*Confirmed` twin, so answering "Save anyway" ends at the
+  same door — and therefore the same ordering guarantees — as before.
+  `tools/question-persistence-tests.mjs` pins that.
+- **The VETTING LIST is searched as well as the bank**, and the result says
+  which (`_dupWhereLabel`). The commonest duplicate of all is the same
+  screenshot read twice in one sitting, and BOTH copies are then in vetting,
+  where a bank-only search sees neither — nothing was flagged, and the pair was
+  approved into the bank one after the other.
+- **`_dupStillThere` is the ONE place a suspected twin is checked for existence**,
+  and it reads both lists. The vetting card used to ask `questionBank` alone, so
+  a twin that is itself still in vetting made the badge vanish.
+- **The banner's 👁 button ASKS before it leaves** (`dupOpenOriginal`). The
+  banner is on screen while the author is mid-compose, so loading the twin
+  replaces the draft they are looking at; hovering the same button previews a
+  BANK twin without leaving at all, which is the answer most of the time. The
+  vetting card's copy of the button needs no guard — nothing is being typed
+  there — which is what the third argument to `_dupSeeOriginalBtn` selects.
+- **The hover preview is attached only for a BANK twin.** `ppBankHoverHtml`
+  reads `questionBank` and nothing else, so a vetting original would open an
+  empty card that reads as a broken preview.
+- Run **`node tools/duplicate-warning-tests.mjs`** after touching any of it.
+
 ## Authoring surfaces that must not be merged
 
 - **📄 Exam Paper** (`ep*`) takes a whole paper the way a teacher has one:
@@ -1383,10 +1435,18 @@ reported in chat, to know whether the deploy actually went through.
   named constant used at every call site rather than a string typed out in three
   places, and swapping the model means checking its scale first. The Science app
   (`polymathlc/cer`) carries the same pair — keep the two in step.
-- Run the eighteen harnesses after touching what they cover — every failure
+- Run the nineteen harnesses after touching what they cover — every failure
   they catch is **silent**, with nothing thrown and nothing wrong on screen:
   - `node tools/answer-key-tests.mjs`
   - `node tools/check-questions-tests.mjs`
+  - `node tools/duplicate-warning-tests.mjs` — the duplicate warning. It fails
+    silently in both directions and the app works perfectly either way: too
+    tight and it never fires (a question re-read off the same paper is never
+    worded byte-for-byte the same), too loose and it fires on every save, which
+    makes it a warning nobody reads and lets the real duplicate through behind
+    it. It also pins that the VETTING list is searched — the commonest
+    duplicate of all is the same screenshot read twice in one sitting, and both
+    copies are then in vetting where a bank-only search sees neither.
   - `node tools/vetting-bulk-delete-tests.mjs` — clearing the vetting list.
     This is the most destructive button in the app and every way it can go
     wrong is silent: 🗑 Delete all reading `vettingList` instead of the
