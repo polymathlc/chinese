@@ -1017,6 +1017,50 @@ after it INHERITS until the next opener. Read it with `qPartMap(blocks)` /
   scanned text, then saves a COPY and only commits to `questionBank` on success:
   between scan and apply a question can be edited or deleted.
 
+## Clearing the vetting list — deleting several at once (v2.7.0)
+
+`_vetSelected` / `_vetVisibleQuestions` / `_vetDeleteMany` (in `app.js`, search
+`DELETING SEVERAL VETTING QUESTIONS AT ONCE`), plus the tick box on every
+vetting card, the `#vetBulkBar` above the grid and **🗑 Delete all** beside
+✨ AI Auto-Vet All.
+
+The vetting list is where a whole BAD BATCH lands — forty screenshots off the
+wrong paper, an import run twice, a set the model made a mess of. Clearing that
+one card at a time is forty confirm dialogs, which is why it gets left instead,
+and a vetting list nobody clears is one nobody reads either.
+
+- **"All" means every card the author can SEE.** `_vetVisibleQuestions` is the
+  ONE place that set is worked out — filtered by the search box, newest first —
+  and the cards, the tick-all box, 🗑 Delete selected and 🗑 Delete all all read
+  it. Deleting questions hidden behind a filter is the one outcome nobody could
+  have predicted from the button they pressed, so the confirm **says which of
+  the two it is doing** and how many are being spared.
+- **The deletes are AWAITED, one document at a time** (`deleteVettingDocAwait`,
+  the awaited twin of the fire-and-forget `deleteVettingDoc`). A batch has to be
+  able to report that four of forty would not go, and a question leaves
+  `vettingList` only once its document really went — the same order every other
+  move in this app uses. A list that has dropped a question the database still
+  holds looks perfectly right until the next sign-in.
+- **The selection is PRUNED on every render** (`_vetPruneSelection`). A ticked
+  question approved into the bank, edited away or auto-vetted out is not a thing
+  to delete; doing it in the renderer rather than in each of those paths is what
+  covers a path added later. "3 selected" outliving the cards it counted is how
+  the wrong question gets deleted.
+- **The ticks live in a `Set` of ids, never as a flag on the question.** Those
+  objects are replaced wholesale by re-reads and cross-tab syncs, which would
+  silently drop the tick.
+- **`.vet-pick` must set `appearance: auto`** — Tailwind's preflight sets it to
+  `none`, which leaves an invisible white square exactly where the control the
+  author is looking for should be. The usual trap.
+- A ticked card's outline **outranks** the duplicate / just-added one while it is
+  ticked and gives it back when unticked: both are inline styles, so one has to
+  win outright rather than being layered.
+- **This delete is FINAL — it does not go through the 🗑 bin.** It is the same
+  `deleteVettingDoc` the single card's 🗑 has always used, and the confirm says
+  so in as many words. A vetting draft that should be kept is approved into the
+  bank, where deleting *is* a move to the bin.
+- Run **`node tools/vetting-bulk-delete-tests.mjs`** after touching any of it.
+
 ## Authoring surfaces that must not be merged
 
 - **📄 Exam Paper** (`ep*`) takes a whole paper the way a teacher has one:
@@ -1339,10 +1383,17 @@ reported in chat, to know whether the deploy actually went through.
   named constant used at every call site rather than a string typed out in three
   places, and swapping the model means checking its scale first. The Science app
   (`polymathlc/cer`) carries the same pair — keep the two in step.
-- Run the seventeen harnesses after touching what they cover — every failure
+- Run the eighteen harnesses after touching what they cover — every failure
   they catch is **silent**, with nothing thrown and nothing wrong on screen:
   - `node tools/answer-key-tests.mjs`
   - `node tools/check-questions-tests.mjs`
+  - `node tools/vetting-bulk-delete-tests.mjs` — clearing the vetting list.
+    This is the most destructive button in the app and every way it can go
+    wrong is silent: 🗑 Delete all reading `vettingList` instead of the
+    VISIBLE set destroys the questions the author had filtered away and never
+    saw, and a question dropped from the list on a delete the database refused
+    leaves a page that looks tidy and a question that is back at the next
+    sign-in.
   - `node tools/objective-tag-tests.mjs`
   - `node tools/learning-gap-tests.mjs`
   - `node tools/question-persistence-tests.mjs` — whether a question the author
