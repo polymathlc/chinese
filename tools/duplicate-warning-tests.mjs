@@ -50,7 +50,10 @@ function _docQParts(q) {
 }
 `;
 
-const block = cut('function _dupTokenSet(q) {', '\n// Stamp q._dupOf', 'matcher');
+// From the CJK bigram helper, not from `_dupTokenSet` — the tokeniser calls it,
+// so a cut that starts at the tokeniser loads a matcher that throws on its
+// first question. That is exactly the failure this file exists to catch.
+const block = cut('const _DUP_CJK_RUN_RE', '\n// Stamp q._dupOf', 'matcher');
 
 const M = new Function(FIXTURE + block + `
 return {
@@ -58,6 +61,17 @@ return {
   where: _dupWhereLabel,
   stillThere: _dupStillThere,
   MIN: DUP_MIN_SCORE,
+  seed(bank, vetting) { questionBank = bank || []; vettingList = vetting || []; },
+};`)();
+
+// The side-by-side comparison's own helpers, cut separately: they sit after
+// `_tagDuplicate`, past the end of the matcher block above.
+const cmpBlock = cut('function _dupFindQuestion(id) {', '\nfunction _dupWordList', 'compare');
+const C = new Function(FIXTURE + block + cmpBlock + `
+return {
+  findQ: _dupFindQuestion,
+  diff: _dupDiffWords,
+  tokens: _dupTokenSet,
   seed(bank, vetting) { questionBank = bank || []; vettingList = vetting || []; },
 };`)();
 
@@ -188,6 +202,94 @@ test('a twin that has been DELETED stops being shown', () => {
 
 test('the threshold is a named constant, in the sane middle of the range', () => {
   ok(M.MIN > 0.5 && M.MIN < 0.95, 'DUP_MIN_SCORE is outside the useful range: ' + M.MIN);
+});
+
+// ── 华文 ─────────────────────────────────────────────────────────────────────
+// This app's questions ARE Chinese, and `_docNorm` keeps only [a-z0-9] — so
+// until the bigram tokeniser every one of them normalised to an empty string,
+// `target.size < 3` refused it, and the duplicate warning never fired once in
+// this portal. Nothing threw and nothing looked wrong; the feature was simply
+// not there. These four cases are what stop it going back to that.
+
+const ZH_ORIGINAL = q('z1', '课外活动的好处',
+  '弟弟不小心把果汁洒在自己的衬衫上，哭着喊妈妈帮他换。请说明为什么他需要马上换衣服。',
+  ['因为衬衫脏了', '因为衬衫湿了会不舒服', '因为妈妈生气了', '因为果汁很甜']);
+const ZH_RE_READ = q('z2', '课外活动的好处',
+  '16. 弟弟不小心把果汁洒在自己的衬衫上，哭着喊妈妈帮他换。请说明为什么他需要马上换衣服。',
+  ['因为衬衫脏了', '因为衬衫湿了会不舒服', '因为妈妈生气了', '因为果汁很甜']);
+const ZH_SIBLING = q('z3', '课外活动的种类',
+  '学校的课外活动种类非常丰富，有下棋、画画和各种团队活动。请说明参加团队活动对学生有什么帮助。',
+  ['可以交到朋友', '可以少上课', '可以多吃点心', '可以早点回家']);
+
+test('a Chinese question is tokenised at all', () => {
+  // The one that was broken: two IDENTICAL 华文 questions were not even
+  // compared, because both normalised away to nothing.
+  M.seed([ZH_ORIGINAL], []);
+  const hit = M.find(ZH_RE_READ);
+  ok(hit, 'the same 华文 question read twice was not flagged at all');
+  eq(hit.id, 'z1', 'the wrong twin');
+  ok(hit.pct >= 90, 'a re-read of the same 华文 question scored only ' + hit.pct + '%');
+});
+
+test('two different Chinese questions on one topic are NOT flagged', () => {
+  // The other direction. 课外活动 appears in both and so do a dozen common
+  // characters; bigrams are what keep that from reading as the same question.
+  M.seed([ZH_ORIGINAL], []);
+  ok(!M.find(ZH_SIBLING), 'two different 华文 questions were called duplicates');
+});
+
+test('a Chinese question does not match ITSELF', () => {
+  M.seed([ZH_ORIGINAL], []);
+  ok(!M.find(ZH_ORIGINAL), 're-saving a 华文 question warned against itself');
+});
+
+test('Chinese and English tokens live in the same set', () => {
+  // A title in English on a Chinese body is ordinary here, and both halves
+  // have to count or a question is judged on half of itself.
+  const mixed = q('z4', 'Comprehension: 课外活动',
+    'The passage says 学校的课外活动种类非常丰富，有下棋、画画和各种团队活动。');
+  const twin = q('z5', 'Comprehension: 课外活动',
+    'The passage says 学校的课外活动种类非常丰富，有下棋、画画和各种团队活动。');
+  M.seed([mixed], []);
+  ok(M.find(twin), 'a mixed English/Chinese question was not matched against its twin');
+});
+
+// ── the side-by-side comparison ──────────────────────────────────────────────
+// The comparison itself is visible — two columns with headings that say which
+// is which — so a swap there is caught by looking. What is NOT visible is the
+// difference strip underneath: "only in the one you are writing" and "only in
+// the one already filed" are two lists of plain words, and reversed they read
+// perfectly and tell the author the opposite of the truth.
+
+test('the twin is resolved from whichever list it is in', () => {
+  C.seed([ORIGINAL], [SIBLING]);
+  eq(C.findQ('a1').where, 'bank', 'a bank twin');
+  eq(C.findQ('b1').where, 'vetting', 'a vetting twin');
+  eq(C.findQ('a1').q.id, 'a1', 'the wrong question came back');
+  eq(C.findQ('nope'), null, 'a missing id');
+  eq(C.findQ(''), null, 'an empty id');
+});
+
+test('the difference strip lists each side\'s OWN words, not the other side\'s', () => {
+  // The direction that fails silently. `cupboard` is only in the pair above,
+  // `salty` only in the sibling — so each has to come back under its own side.
+  const mine = C.tokens(ORIGINAL), theirs = C.tokens(SIBLING);
+  const onlyMine = C.diff(mine, theirs), onlyTheirs = C.diff(theirs, mine);
+  ok(onlyMine.includes('cupboard'), '"cupboard" is only in the original and was not listed under it');
+  ok(!onlyTheirs.includes('cupboard'), '"cupboard" was listed as being only in the other question');
+  ok(onlyTheirs.includes('salty'), '"salty" is only in the sibling and was not listed under it');
+  ok(!onlyMine.includes('salty'), '"salty" was listed as being only in the original');
+  // A word in both is in neither list — that is what makes the strip short
+  // enough to read at all.
+  ok(!onlyMine.includes('plant') && !onlyTheirs.includes('plant'), 'a shared word was listed as a difference');
+});
+
+test('two identical questions have NOTHING on either side', () => {
+  // This is what the strip prints "word for word the same" on, and it is the
+  // strongest thing it can tell an author.
+  const a = C.tokens(ORIGINAL), b = C.tokens(ORIGINAL);
+  eq(C.diff(a, b), [], 'a question differed from itself');
+  eq(C.diff(b, a), [], 'a question differed from itself the other way round');
 });
 
 // ── runner ───────────────────────────────────────────────────────────────────

@@ -1155,6 +1155,74 @@ everywhere it was not being asked.
   empty card that reads as a broken preview.
 - Run **`node tools/duplicate-warning-tests.mjs`** after touching any of it.
 
+### ⇄ Side by side — the comparison the warning was missing (vv2.10.0)
+
+`dupCompare` / `_dupFindQuestion` / `_dupCompareSide` / `_dupDiffHtml`
+(search `SIDE BY SIDE`), plus the `#dupCompareOverlay` in `index.html`.
+
+The banner said *"this looks 90% like Sharing a Sum of Money"* and offered
+exactly ONE button: **open** that question. Which replaces the draft — so the
+only way to answer the question the banner asks (*are these two the same?*) was
+to throw away the thing being compared, go and look, and then build it again
+from memory. Nobody does that, so the warning got clicked past, which makes it
+a warning that costs attention and buys nothing.
+
+The two questions now go up **next to each other**: what is being written on the
+left, what is already filed on the right.
+
+- **Both sides go through the SAME renderer** — `renderQuestionBodyPreviewHtml`,
+  split out of `renderQuestionPreviewHtml` so it takes the question OBJECT
+  rather than an id, because the left-hand column is a draft that has never been
+  saved and has no id to look up. A second renderer written for this view would
+  be free to drift, and a comparison whose two halves are drawn by different
+  code can flatter one of them.
+- **Nothing is written and nothing is replaced by opening it.** It is a read.
+  The one destructive action — loading the original into the editor — lives in
+  the overlay's foot, still behind `dupOpenOriginal`'s confirm, and is now
+  reached only by somebody who has actually seen what they are about to lose. It
+  is **hidden** when the left-hand side is a saved question (a vetting card),
+  because there is no draft to lose there.
+- **`mineId` names the LEFT-hand question.** A vetting card passes its own id;
+  the editor banner passes nothing, and the draft is read from
+  `_dupEditorQuestion()`. That third argument to `_dupSeeOriginalBtn` used to be
+  a boolean `guard` — same position, different meaning, so check both call sites
+  if you change it.
+- **It says what differs IN WORDS** (`_dupDiffHtml`, through the matcher's own
+  `_dupTokenSet`). Two near-identical questions are near-identical to LOOK at,
+  which is the whole problem: the eye slides straight over the one changed
+  number. The words appearing on one side only are the fastest honest answer to
+  "so what did they change?", and a diff computed on any other footing would
+  contradict the percentage printed above it. When both lists are empty it says
+  *word for word the same*, which is the strongest thing it can tell an author.
+- Run **`node tools/duplicate-warning-tests.mjs`** after touching any of it —
+  the direction of the difference strip is the silent one: reversed, the two
+  lists read perfectly and tell the author the opposite of the truth.
+
+### The matcher had never fired in this app at all (v2.10.0)
+
+`_dupTokenSet` / `_dupCjkBigrams` / `_DUP_CJK_RUN_RE`.
+
+`_docNorm` keeps only `[a-z0-9]`, so a 华文 question normalised to an EMPTY
+STRING, `target.size < 3` refused it, and `findDuplicateCandidate` returned null
+every single time. The banner, the vetting badge, the save prompt and now the
+side-by-side comparison all hang off that one function — so the whole feature
+was decoration here, and nothing threw or looked wrong.
+
+- **Two kinds of token, and both are needed.** Latin words keep the `length > 2`
+  rule they always had (a romanised name, a number, an English title). Chinese
+  is written without spaces, so it is tokenised as character **BIGRAMS** —
+  学习 / 习成 / 成绩.
+- **Bigrams, not characters and not words.** Single characters are far too
+  common (的 and 是 would make any two questions look alike), and whole words
+  would need `zhSegment`, whose dictionary is FETCHED and may not have arrived
+  when the matcher runs.
+- The harness cuts from `const _DUP_CJK_RUN_RE`, not from `_dupTokenSet`: the
+  tokeniser calls the helper, so a cut starting at the tokeniser loads a matcher
+  that throws on its first question.
+- Four cases pin it from both directions — an identical 华文 pair must be
+  flagged, two different questions on one topic must NOT be, a question must not
+  match itself, and a mixed English/Chinese question must count both halves.
+
 ## Authoring surfaces that must not be merged
 
 - **📄 Exam Paper** (`ep*`) takes a whole paper the way a teacher has one:
