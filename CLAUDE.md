@@ -177,6 +177,82 @@ one they stopped using.
 - `<link rel="modulepreload" href="app.js">` in the head is what starts the app
   download early. Keep it, and keep it pointing at the right filename.
 
+## 🔍 词语查询 — the look-up lens (v2.13.0)
+
+`lu*` (in `app.js`, search `THE LOOK-UP LENS`), plus `#luFab`, `#luOverlay`,
+`#luCard` and the `.lu-*` CSS in `index.html`. **This block is in the Chinese
+app only** — do not port it to the three siblings without deciding what it
+would mean there.
+
+A student reading a 华文 question meets a word they do not know. Everything the
+app can tell them about it is somewhere else — another page, another app, a
+paper dictionary — so in practice they skip it, and the one word the passage
+turned on goes unlearned. The lens is always on the screen: press it, drag a
+box round the word, and the card comes back with the 拼音 (with tone marks),
+what it means, an example sentence, and a 🔊 for each.
+
+- **TEXT IS READ FROM THE PAGE, NOT OCR'd FROM A SCREENSHOT**, and that is the
+  design decision the whole tool rests on. What is under the box is nearly
+  always DOM text — a question stored as characters — and reading the
+  characters straight out of the page is exact, instant and free, where a
+  picture of them is a guess an image model has to make. `_luTextIn` walks the
+  text nodes and takes the characters whose own box the student drew around,
+  **character by character, by each character's CENTRE**: a text node's line
+  box runs the width of the column, so testing the node's rectangle hands back
+  the whole line and the student who boxed 衬衫 is told about 弟弟.
+- **…and a scanned question really is a picture**, so `_luCropImage` is not
+  optional: with no text under the box it cuts that rectangle out of whatever
+  `<img>` lies under it and sends THAT to the vision model. It goes through
+  `_urlToDataUrlRobust` — the app's own fetch → CORS `<img>` → proxy ladder —
+  because a canvas tainted by a cross-origin picture cannot be read back and
+  the failure looks exactly like an empty selection.
+- **`_luCropBox` is pure and separate from the canvas work.** Screen box →
+  the picture's own pixels, clamped to the overlap. Getting it wrong crops a
+  different part of the diagram, and the only symptom is the AI confidently
+  explaining a different word.
+- **The pinyin comes from the MODEL, not from `pinyin-dict.json`.** That
+  dictionary is the IME's: keyed the other way round (pinyin → characters) and
+  **toneless** — "zhi" for 知, 直 and 只 alike. Pinyin without tones is the
+  wrong answer to "how do I say this", so a local look-up would be worse than
+  none.
+- **The selection is a READ.** Nothing in the block writes a question, a mark,
+  an attempt or a progress row — a student looking a word up is reading, not
+  being tested, and it must never cost them a mark or a credit. The harness
+  pins that.
+- **The prompt is the CACHE KEY** (`askGeminiCached`), so the same word looked
+  up twice in a session is free and instant — which matters, because the word a
+  class does not know is the word thirty of them will look up. `_luBusy` is the
+  in-flight guard.
+- **A multi-word selection is answered with ONE word, and the card shows
+  WHICH.** The prompt says the `word` field is what the student is shown, so a
+  box drawn round half a sentence can never explain something the student
+  cannot see it explained.
+- **🔊 is `speechSynthesis`** — on every school Chromebook and phone, free, and
+  offline. What it needs is a **Chinese voice**: an English voice reading 衬衫
+  is confident nonsense, so `_luZhVoice` looks for a `zh-*` voice and the button
+  says the device has none rather than playing gibberish. An **empty** voice
+  list means "not loaded yet", not "no voice" — Safari and Chrome both hand back
+  nothing until they load, and a button hidden on that empty list never comes
+  back. `onvoiceschanged` re-syncs it.
+- **All three pieces of markup are DIRECT CHILDREN of `<body>`.** Nested inside
+  any of the app's overlays they inherit its `display:none` and no student ever
+  sees them — `position: fixed` makes that worse, not better, since a fixed
+  element still inherits it. That is the bug that hid the Maths app's subject
+  switcher for nine minor versions, and the harness pins it here.
+- **The picking layer sits above EVERYTHING**, including the app's own modals
+  and the IME bar at `z-index: 100000`. A student looks a word up in whatever is
+  in front of them, and anything painted over that layer would be visible,
+  boxable and unclickable at the same time. `touch-action: none` is what stops
+  the first drag on a phone scrolling the page instead.
+- **The button lives on the RIGHT EDGE, vertically centred**, and that is not a
+  taste call: the top-right corner is the subject switcher's and the
+  bottom-right already holds the 拼音 pill and the work-session bar. It hides
+  itself while the card is open, because the card carries its own *look up
+  another* and on a short screen the two overlap.
+- It is turned on from **`configureSidebarForRole`**, the one function every
+  signed-in path goes through, for the subject switcher's reason.
+- Run **`node tools/lookup-lens-tests.mjs`** after touching any of it.
+
 ## 拼音 input — a Chinese keyboard on an English keyboard
 
 `zhime*` (in `app.js`, search `拼音 INPUT METHOD`). Type pinyin, pick the
@@ -1800,6 +1876,15 @@ that door: a line to type in, and the same image model behind it.
     comment because the failure it guards has already happened once and did not
     look like a failure: the wrong subject's questions on the bank page, which
     reads as a filter bug.
+  - `node tools/lookup-lens-tests.mjs` — 🔍 the look-up lens. Every failure is
+    silent: a drag made right-to-left gives a negative rectangle that matches
+    nothing (so the tool works only for right-handed dragging), a crop mapped
+    wrong sends the model a different part of the diagram and it explains a
+    different word fluently, a card field the prompt stopped asking for is
+    blank for ever, pinyin without tone marks is the wrong answer to the only
+    question being asked, an English voice reading 衬衫 is confident nonsense,
+    and markup nested inside one of the app's overlays inherits its
+    display:none and is never seen at all.
   - `node tools/pinyin-ime-tests.mjs` — the input method's candidate ORDER, the
     word segmenter, and the Chinese-aware blank tokenizer. A candidate list in
     the wrong order is the wrong character typed into a question and saved. A

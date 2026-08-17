@@ -1819,7 +1819,7 @@ async function enterApp(user) {
 
 // App version shown to admins in the sidebar. BUMP THIS on every change you
 // deploy (see CLAUDE.md) so the admin can confirm the latest build is live.
-const APP_VERSION = 'v2.12.0';
+const APP_VERSION = 'v2.13.0';
 
 // =====================================================================
 // THE SUBJECT SWITCHER — one student, four subjects (v2.6.0)
@@ -2058,6 +2058,12 @@ function configureSidebarForRole(role) {
   // three roles: a student needs it to reach their other subjects, and an
   // author moving between the four banks needs it just as much.
   subjectShow();
+  // The look-up lens, for the same reason and from the same one place: every
+  // signed-in role gets it (a student needs it most, and a teacher checking a
+  // question is reading the same characters), and before sign-in it would
+  // float over the login card belonging to nobody.
+  luShow();
+  _luBindPicker();
   ensureMobileToggles();
   loadCustomTopics();
   rebuildTopicSelect();
@@ -40771,6 +40777,380 @@ window.loEditorSet = loEditorSet;
 //    index.html exist to keep first paint off the school's network.
 //    `pinyin-dict.json` ships in the same directory — deploy the directory.
 // =====================================================================
+// 🔍 词语查询 — THE LOOK-UP LENS (`lu*`)
+//
+// A student reading a 华文 question meets a word they do not know. Everything
+// the app can tell them about it is somewhere else — a different page, a
+// different app, a paper dictionary — so in practice they skip it, and the one
+// word the passage turned on goes unlearned.
+//
+// The lens is always on the screen: press it, drag a box round the word, and
+// the card comes back with the 拼音 (with tone marks), what it means, an
+// example sentence, and a 🔊 button for each so they can HEAR it. It is
+// deliberately a Chinese-app-only tool — the other three portals do not carry
+// this block.
+//
+// SIX things worth keeping:
+//
+// 1. TEXT IS READ FROM THE PAGE, NOT OCR'd FROM A SCREENSHOT. What is under
+//    the box is nearly always DOM text — a question stored as characters — and
+//    reading the characters straight out of the page is exact, instant and
+//    free, where a picture of them is a guess an image model has to make. So
+//    `_luTextIn` walks the text nodes and takes the characters whose own box
+//    the student actually drew around, CHARACTER BY CHARACTER, and only a
+//    selection that finds no text at all falls through to the picture path.
+//
+// 2. …and a scanned question really is a picture, so the picture path is not
+//    optional. `_luCropImage` cuts the selected rectangle out of whatever
+//    <img> lies under it and sends THAT to the vision model. It goes through
+//    `_urlToDataUrlRobust`, the app's own ladder (fetch → CORS <img> → proxy),
+//    because a canvas tainted by a cross-origin picture cannot be read back
+//    and the failure looks exactly like an empty selection.
+//
+// 3. THE PINYIN COMES FROM THE MODEL, NOT FROM `pinyin-dict.json`. That
+//    dictionary is the IME's, and it is keyed the other way round (pinyin →
+//    characters) and TONELESS — "zhi" for 知, 直, 只 alike. Pinyin without
+//    tones is the wrong answer to "how do I say this", so a local look-up here
+//    would be worse than none.
+//
+// 4. THE SELECTION IS A READ. Nothing here writes a question, a mark, an
+//    attempt or a progress row: a student looking a word up is reading, not
+//    being tested, and it must never cost them a mark or a credit.
+//
+// 5. The prompt is the CACHE KEY (`askGeminiCached`), so the same word looked
+//    up twice in a session is free and instant — which matters, because the
+//    word a class does not know is the word thirty of them will look up.
+//
+// 6. 🔊 IS speechSynthesis, not an audio file and not a fetch. It is on every
+//    school Chromebook and phone, it costs nothing and it works offline. What
+//    it needs is a CHINESE voice: an English voice reading 衬衫 produces
+//    confident nonsense, so `_luZhVoice` looks for a zh voice and the button
+//    says so plainly when the device has none rather than playing gibberish.
+// =====================================================================
+const LU_MIN_DRAG = 12;          // px: below this it was a click, not a drag
+const LU_MAX_CHARS = 120;        // never send a whole page to the model
+const LU_CROP_MAX = 900;         // px on the long side of a cropped picture
+const LU_SPEAK_RATE = 0.85;      // a shade slow — this is being learned, not skimmed
+let _lu = null;                  // the live drag: { x0, y0, x1, y1 }
+let _luBusy = false;             // one look-up at a time
+let _luVoices = null;
+
+function luAvailable() { return !!currentUser; }
+// Shown from configureSidebarForRole — the ONE function every signed-in path
+// goes through — for the reason the subject switcher is: three call sites
+// would drift, and before sign-in the button would float over the login card
+// belonging to nobody.
+function luShow() {
+  const fab = document.getElementById('luFab');
+  if (fab) fab.style.display = luAvailable() ? 'flex' : 'none';
+}
+
+// ---- the selection ----------------------------------------------------------
+function luStart() {
+  if (!luAvailable()) return;
+  const ov = document.getElementById('luOverlay');
+  const box = document.getElementById('luBox');
+  if (!ov || !box) return;
+  luCloseCard();
+  _lu = null;
+  box.style.display = 'none';
+  ov.style.display = 'block';
+  document.body.classList.add('lu-picking');
+  const hint = document.getElementById('luHint');
+  if (hint) hint.style.display = 'block';
+}
+function luCancel() {
+  const ov = document.getElementById('luOverlay');
+  if (ov) ov.style.display = 'none';
+  document.body.classList.remove('lu-picking');
+  _lu = null;
+}
+function _luRect() {
+  if (!_lu) return null;
+  const x = Math.min(_lu.x0, _lu.x1), y = Math.min(_lu.y0, _lu.y1);
+  return { left: x, top: y, right: x + Math.abs(_lu.x1 - _lu.x0), bottom: y + Math.abs(_lu.y1 - _lu.y0),
+           width: Math.abs(_lu.x1 - _lu.x0), height: Math.abs(_lu.y1 - _lu.y0) };
+}
+function _luDrawBox() {
+  const box = document.getElementById('luBox');
+  const r = _luRect();
+  if (!box || !r) return;
+  box.style.display = 'block';
+  box.style.left = r.left + 'px';
+  box.style.top = r.top + 'px';
+  box.style.width = r.width + 'px';
+  box.style.height = r.height + 'px';
+}
+function _luBindPicker() {
+  const ov = document.getElementById('luOverlay');
+  if (!ov || ov.dataset.luBound) return;
+  ov.dataset.luBound = '1';
+  ov.addEventListener('pointerdown', e => {
+    e.preventDefault();
+    _lu = { x0: e.clientX, y0: e.clientY, x1: e.clientX, y1: e.clientY };
+    try { ov.setPointerCapture(e.pointerId); } catch (_) {}
+    const hint = document.getElementById('luHint');
+    if (hint) hint.style.display = 'none';
+    _luDrawBox();
+  });
+  ov.addEventListener('pointermove', e => {
+    if (!_lu) return;
+    _lu.x1 = e.clientX; _lu.y1 = e.clientY;
+    _luDrawBox();
+  });
+  ov.addEventListener('pointerup', e => {
+    if (!_lu) { luCancel(); return; }
+    _lu.x1 = e.clientX; _lu.y1 = e.clientY;
+    const r = _luRect();
+    luCancel();
+    // A tap is not a selection. Saying so beats looking up whatever single
+    // character happened to be under one finger.
+    if (!r || r.width < LU_MIN_DRAG || r.height < LU_MIN_DRAG) {
+      showToast('用手指或鼠标框住一个词语 — Drag a box around the word', 'info');
+      return;
+    }
+    luLookUp(r);
+  });
+}
+// Esc gets out, from the drag or from the card.
+document.addEventListener('keydown', e => {
+  if (e.key !== 'Escape') return;
+  const ov = document.getElementById('luOverlay');
+  if (ov && ov.style.display === 'block') { luCancel(); return; }
+});
+
+// ---- what is under the box --------------------------------------------------
+// Character by character, and by the character's own CENTRE: a text node's line
+// box runs the width of the column, so testing the node's rectangle would hand
+// back the whole line every time — the student boxes 衬衫 and is told about 弟弟.
+function _luTextIn(rect) {
+  const out = [];
+  const walk = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
+    acceptNode(n) {
+      if (!n.nodeValue || !n.nodeValue.trim()) return NodeFilter.FILTER_REJECT;
+      const el = n.parentElement;
+      if (!el) return NodeFilter.FILTER_REJECT;
+      // The lens's own furniture, and anything not being shown.
+      if (el.closest('#luOverlay, #luCard, #luFab, script, style, option')) return NodeFilter.FILTER_REJECT;
+      if (!el.getClientRects().length) return NodeFilter.FILTER_REJECT;
+      return NodeFilter.FILTER_ACCEPT;
+    }
+  });
+  const hit = (r) => {
+    const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+    return r.width > 0 && r.height > 0 &&
+      cx >= rect.left && cx <= rect.right && cy >= rect.top && cy <= rect.bottom;
+  };
+  let node;
+  while ((node = walk.nextNode())) {
+    const range = document.createRange();
+    range.selectNodeContents(node);
+    const nb = range.getBoundingClientRect();
+    // Cheap reject first: a node nowhere near the box is never walked.
+    if (nb.right < rect.left || nb.left > rect.right || nb.bottom < rect.top || nb.top > rect.bottom) continue;
+    const text = node.nodeValue;
+    let taken = '';
+    for (let i = 0; i < text.length; i++) {
+      try {
+        range.setStart(node, i); range.setEnd(node, i + 1);
+        if (hit(range.getBoundingClientRect())) taken += text[i];
+      } catch (_) { /* a node that moved under us */ }
+    }
+    if (taken.trim()) out.push(taken);
+    if (out.join('').length > LU_MAX_CHARS * 2) break;
+  }
+  return out.join('').replace(/\s+/g, ' ').trim().slice(0, LU_MAX_CHARS);
+}
+// Screen box → the picture's OWN pixels. Both sides are CSS pixels, so the
+// ratio carries the page zoom and the device pixel ratio with it, and clamping
+// to the overlap is what keeps a box drawn half off the picture from asking
+// for pixels that are not there. Pure, and separate from the canvas work,
+// because getting it wrong crops a different part of the diagram and the only
+// symptom is the AI confidently explaining another word entirely.
+function _luCropBox(rect, r, natW, natH) {
+  const kx = natW / r.width, ky = natH / r.height;
+  const l = Math.max(rect.left, r.left), t = Math.max(rect.top, r.top);
+  const rr = Math.min(rect.right, r.right), bb = Math.min(rect.bottom, r.bottom);
+  return {
+    sx: Math.max(0, (l - r.left) * kx),
+    sy: Math.max(0, (t - r.top) * ky),
+    sw: Math.max(1, (rr - l) * kx),
+    sh: Math.max(1, (bb - t) * ky)
+  };
+}
+// The picture under the box, cropped to exactly what was boxed. Returns
+// { mimeType, data } for the vision call, or null.
+async function _luCropImage(rect) {
+  let best = null, bestArea = 0;
+  document.querySelectorAll('img').forEach(img => {
+    if (img.closest('#luOverlay, #luCard, #luFab')) return;
+    const r = img.getBoundingClientRect();
+    const w = Math.min(r.right, rect.right) - Math.max(r.left, rect.left);
+    const h = Math.min(r.bottom, rect.bottom) - Math.max(r.top, rect.top);
+    if (w <= 0 || h <= 0) return;
+    if (w * h > bestArea) { bestArea = w * h; best = { img, r }; }
+  });
+  if (!best) return null;
+  const src = best.img.currentSrc || best.img.src;
+  if (!src) return null;
+  const dataUrl = await _urlToDataUrlRobust(src);
+  const im = await new Promise((res, rej) => {
+    const i = new Image();
+    i.onload = () => res(i); i.onerror = () => rej(new Error('crop load'));
+    i.src = dataUrl;
+  });
+  const { sx, sy, sw, sh } = _luCropBox(rect, best.r, im.naturalWidth || im.width, im.naturalHeight || im.height);
+  // A word cropped out of a diagram is small; sending it at its own size gives
+  // the model more to read than a thumbnail would, up to a sane ceiling.
+  const scale = Math.min(1, LU_CROP_MAX / Math.max(sw, sh));
+  const cv = document.createElement('canvas');
+  cv.width = Math.max(1, Math.round(sw * scale));
+  cv.height = Math.max(1, Math.round(sh * scale));
+  cv.getContext('2d').drawImage(im, sx, sy, sw, sh, 0, 0, cv.width, cv.height);
+  const out = cv.toDataURL('image/png');
+  return { mimeType: 'image/png', data: out.split(',')[1] || '' };
+}
+
+// ---- the look-up ------------------------------------------------------------
+const LU_FIELDS = '返回 ONLY JSON: {"word":"…","pinyin":"…","meaning":"…","english":"…","example":"…","exampleEn":"…"}\n' +
+  '- "word": the word or phrase being explained, in Simplified Chinese. If what was picked out is a whole sentence or several words, choose the ONE word in it a Primary 4–6 student is least likely to know and put THAT word here — the student is shown this field, so it always says what you actually explained.\n' +
+  '- "pinyin": 汉语拼音 WITH TONE MARKS (chèn shān, not chen shan), lowercase, one space between syllables. Tone marks are the whole point of this field.\n' +
+  '- "meaning": what it means, in simple Chinese a 10-year-old reads easily. At most 30 characters.\n' +
+  '- "english": a short English meaning, at most 8 words.\n' +
+  '- "example": ONE natural sentence using the word, at Primary 4–6 level, at most 20 characters.\n' +
+  '- "exampleEn": that same sentence in English.\n' +
+  'No markdown, no pronunciation guide other than "pinyin", and never leave a field out.';
+
+function _luTextPrompt(text) {
+  return 'A Primary school student reading a 华文 exercise has drawn a box around this text:\n\n' +
+    '「' + text + '」\n\n' +
+    'Explain the word or phrase they picked out, addressed to that student.\n' + LU_FIELDS;
+}
+function _luImagePrompt() {
+  return 'A Primary school student reading a 华文 exercise has drawn a box around part of a picture, and this is exactly what was inside the box.\n\n' +
+    'Read the Chinese in it, then explain the word or phrase it shows, addressed to that student. If the crop holds several words, pick the ONE a Primary 4–6 student is least likely to know.\n' + LU_FIELDS;
+}
+async function luLookUp(rect) {
+  if (_luBusy) return;
+  const text = _luTextIn(rect);
+  if (!window.__aiReady || !window.__aiReady()) { showToast('AI is not set up yet — ask your teacher', 'error'); return; }
+  _luBusy = true;
+  luOpenCard({ loading: true, word: text || '…' });
+  try {
+    let raw;
+    if (text && /[一-鿿]/.test(text)) {
+      // Cached on the prompt, so the same word is free for the rest of the
+      // session — and it is the word a whole class will look up.
+      raw = await askGeminiCached(_luTextPrompt(text), { maxOutputTokens: 400, temperature: 0.2, json: true });
+    } else {
+      const media = await _luCropImage(rect);
+      if (!media) {
+        luOpenCard({ error: '框里没有文字 — nothing to look up in there. Try again, closer to the word.' });
+        return;
+      }
+      raw = await askGeminiVision(_luImagePrompt(), [media], { maxOutputTokens: 400, json: true });
+    }
+    const d = _parseAIJson(raw) || {};
+    if (!d.word && !d.meaning) { luOpenCard({ error: '看不清楚 — could not read that. Try boxing just the word.' }); return; }
+    luOpenCard({ data: d });
+  } catch (e) {
+    console.warn('look-up failed', e);
+    luOpenCard({ error: '查询失败 — the look-up failed. Try again in a moment.' });
+  } finally { _luBusy = false; }
+}
+
+// ---- 🔊 ---------------------------------------------------------------------
+// A Chinese voice or nothing: an English voice reading 衬衫 says something
+// confident and wrong, which is worse for a learner than silence.
+function _luVoiceList() {
+  try { _luVoices = window.speechSynthesis ? window.speechSynthesis.getVoices() : []; }
+  catch (_) { _luVoices = []; }
+  return _luVoices || [];
+}
+function _luZhVoice() {
+  const list = _luVoiceList();
+  return list.find(v => /^zh/i.test(v.lang || '')) || null;
+}
+function luCanSpeak() {
+  if (!window.speechSynthesis || !window.SpeechSynthesisUtterance) return false;
+  // Safari and Chrome hand back an EMPTY list until the voices load, and a
+  // button hidden on that empty list never comes back. An empty list is
+  // "not known yet", so we let it try.
+  const list = _luVoiceList();
+  return !list.length || !!_luZhVoice();
+}
+function luSpeak(which) {
+  if (!window.speechSynthesis) { showToast('This device cannot read text aloud', 'info'); return; }
+  const el = document.getElementById(which === 'example' ? 'luExampleText' : 'luWordText');
+  const text = el ? (el.textContent || '').trim() : '';
+  if (!text) return;
+  try {
+    window.speechSynthesis.cancel();          // never let two voices overlap
+    const u = new SpeechSynthesisUtterance(text);
+    const v = _luZhVoice();
+    if (v) u.voice = v;
+    u.lang = (v && v.lang) || 'zh-CN';
+    u.rate = LU_SPEAK_RATE;
+    window.speechSynthesis.speak(u);
+  } catch (e) { console.warn('speak failed', e); }
+}
+try {
+  if (window.speechSynthesis && 'onvoiceschanged' in window.speechSynthesis) {
+    window.speechSynthesis.onvoiceschanged = () => { _luVoices = null; _luSyncSpeakBtns(); };
+  }
+} catch (_) {}
+function _luSyncSpeakBtns() {
+  const ok = luCanSpeak();
+  document.querySelectorAll('#luCard .lu-speak').forEach(b => {
+    b.disabled = !ok;
+    b.title = ok ? '听一听 — hear it' : 'This device has no Chinese voice installed';
+  });
+}
+
+// ---- the card ---------------------------------------------------------------
+function luCloseCard() {
+  const c = document.getElementById('luCard');
+  if (c) c.style.display = 'none';
+  luShow();                      // the lens comes back when the card goes
+  try { if (window.speechSynthesis) window.speechSynthesis.cancel(); } catch (_) {}
+}
+function luOpenCard(state) {
+  const c = document.getElementById('luCard');
+  const body = document.getElementById('luCardBody');
+  if (!c || !body) return;
+  c.style.display = 'block';
+  // The card carries its own "look up another", and on a short laptop screen
+  // the middle-right button and the bottom-right card overlap. One of them has
+  // to give way, and it is the one whose job the card has taken over.
+  const fab = document.getElementById('luFab');
+  if (fab) fab.style.display = 'none';
+  if (state && state.loading) {
+    body.innerHTML = '<div class="lu-loading"><span class="spinner"></span>正在查询 <b>' + escapeHtml(state.word || '') + '</b>…</div>';
+    return;
+  }
+  if (state && state.error) {
+    body.innerHTML = '<div class="lu-err">' + escapeHtml(state.error) + '</div>';
+    return;
+  }
+  const d = (state && state.data) || {};
+  const speak = (which) => '<button type="button" class="lu-speak" onclick="luSpeak(\'' + which + '\')" aria-label="听一听">🔊</button>';
+  body.innerHTML =
+    '<div class="lu-head">'
+    + '<div class="lu-word" id="luWordText">' + escapeHtml(d.word || '') + '</div>'
+    + speak('word')
+    + '</div>'
+    + (d.pinyin ? '<div class="lu-pinyin">' + escapeHtml(d.pinyin) + '</div>' : '')
+    + (d.meaning ? '<div class="lu-meaning">' + escapeHtml(d.meaning) + '</div>' : '')
+    + (d.english ? '<div class="lu-en">' + escapeHtml(d.english) + '</div>' : '')
+    + (d.example
+      ? '<div class="lu-example"><div class="lu-ex-row"><span id="luExampleText">' + escapeHtml(d.example) + '</span>' + speak('example') + '</div>'
+        + (d.exampleEn ? '<div class="lu-ex-en">' + escapeHtml(d.exampleEn) + '</div>' : '') + '</div>'
+      : '')
+    + '<div class="lu-foot"><button type="button" class="btn btn-outline lu-again" onclick="luStart()">🔍 再查一个 Look up another</button></div>';
+  _luSyncSpeakBtns();
+}
+
+// =====================================================================
 const ZHIME_DICT_URL = 'pinyin-dict.json';
 const ZHIME_PAGE = 9;                 // candidates per page — 1-9 pick them
 const ZHIME_MAX_BUF = 30;
@@ -41145,3 +41525,7 @@ window.wmInsertItem = wmInsertItem;
 window.wmSyncEditor = wmSyncEditor;
 window.wmCheck = wmCheck;
 window.wmClearAll = wmClearAll;
+window.luStart = luStart;
+window.luCancel = luCancel;
+window.luSpeak = luSpeak;
+window.luCloseCard = luCloseCard;
