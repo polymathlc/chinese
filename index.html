@@ -170,6 +170,69 @@
   .cb-ed-prev { border:1px solid var(--border); border-radius:12px; padding:18px 20px 26px; background:var(--surface-alt,#fafbfa); }
   .cb-ed-prev .cb-passage { line-height:2.8; }
 
+/* ---- 🔗 词语搭配 — a numbered word table, then brackets to fill ------------
+   Set the way the paper sets it: the instruction, the boxed table read ACROSS
+   (1 2 3 on the first row, 4 5 6 on the second), then one item a line with a
+   drop-down where the paper prints its bracket.
+
+   The bracket is a DROP-DOWN for the reason the 短文填空 blanks are — this is
+   answered on a school phone, and a number typed into a box is a number that
+   can be typed wrong. Every option carries the paper's number as well as the
+   word, because the marking scheme answers "7（3）". */
+  .wm-intro { font-size:0.9rem; line-height:1.7; margin-bottom:16px; }
+  .wm-bank { width:100%; border-collapse:collapse; border:1.5px solid var(--text); margin:0 0 22px; }
+  .wm-bank td { border:1px solid var(--text); padding:10px 14px; font-size:0.95rem; line-height:1.6; vertical-align:middle; }
+  .wm-bank td b { font-weight:700; margin-right:6px; }
+  .wm-items { display:flex; flex-direction:column; gap:14px; }
+  .wm-q { display:flex; flex-wrap:wrap; align-items:center; gap:8px; font-size:0.98rem; line-height:1.9; }
+  .wm-num { min-width:2.1em; font-weight:800; font-size:0.9rem; color:var(--text-muted); }
+  .wm-phrase { display:inline-flex; flex-wrap:wrap; align-items:center; gap:4px; }
+  .wm-side { white-space:nowrap; }
+  /* appearance:auto is NOT optional: Tailwind's preflight sets it to none,
+     which takes the arrow off and leaves something that does not read as a
+     control at all. Same trap as a bare checkbox. */
+  .wm-pick {
+    appearance:auto; -webkit-appearance:auto;
+    max-width:min(15em, 60vw);
+    padding:3px 7px;
+    border:1px solid var(--accent-blue,#2d6ca8); border-radius:8px;
+    background:var(--surface,#fff); color:var(--text,#14161a);
+    font-family:inherit; font-size:0.95rem; line-height:1.6; cursor:pointer;
+  }
+  .wm-pick:focus-visible { outline:2px solid var(--accent-blue,#2d6ca8); outline-offset:2px; }
+  .wm-pick:disabled { opacity:1; cursor:default; }
+  .wm-q.done .wm-pick { background:var(--accent-blue-light,#eaf1f8); font-weight:600; }
+  .wm-q.right .wm-pick { border-color:#16a34a; background:#dcfce7; color:#14532d; }
+  .wm-q.wrong .wm-pick { border-color:#dc2626; background:#fee2e2; color:#7f1d1d; }
+  .wm-q.right .wm-num { color:#16a34a; }
+  .wm-q.wrong .wm-num { color:#dc2626; }
+  .wm-q.unkeyed .wm-num { opacity:0.6; }
+  /* The right answer stands beside the item it belongs to — a list at the foot
+     makes the student count rows back up to find which one it was. */
+  .wm-ans { color:#16a34a; font-weight:700; font-size:0.9rem; }
+  .wm-actions { display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin:26px 0 4px; }
+  .wm-hint { font-size:0.8rem; color:var(--text-muted); line-height:1.6; }
+  .wm-feedback { margin:6px 0 4px; }
+  .wm-fb-list { display:flex; flex-wrap:wrap; gap:6px 16px; margin-top:8px; font-size:0.85rem; color:var(--text-muted); }
+  /* The block editor's preview and its answer chips. */
+  .wm-ed-slot { font-weight:700; color:var(--accent-blue,#2d6ca8); }
+  .wm-ed-slot.bad { color:#dc2626; }
+  .wm-ed-word { font-size:0.85rem; color:var(--text-muted); }
+  .wm-key-row { display:flex; flex-wrap:wrap; align-items:center; gap:6px; padding:8px 10px; border:1px solid var(--border); border-radius:10px; background:var(--surface-alt,#fafbfa); }
+  .wm-key-row > b { min-width:2em; font-size:0.85rem; color:var(--text-muted); }
+  .wm-key-phrase { min-width:6.5em; font-size:0.9rem; margin-right:6px; }
+  .wm-key-opt {
+    display:inline-flex; align-items:baseline; gap:4px;
+    padding:4px 10px; border:1px solid var(--border); border-radius:8px;
+    background:var(--surface,#fff); color:var(--text,#14161a);
+    font-family:inherit; font-size:0.9rem; cursor:pointer;
+  }
+  .wm-key-opt i { font-style:normal; font-weight:700; color:var(--text-muted); font-size:0.8rem; }
+  .wm-key-opt:hover { border-color:var(--accent-blue,#2d6ca8); }
+  .wm-key-opt.on { border-color:#16a34a; background:#dcfce7; color:#14532d; font-weight:700; }
+  .wm-key-opt.on i { color:#14532d; }
+  .wm-key-todo { font-size:0.78rem; color:#b45309; }
+
 /* ---- 📝 短文填空 — one passage, options in brackets at every blank ---------
    Set the way the paper sets it: the instruction, then the passage running
    straight on with each blank's number and a DROP-DOWN holding that blank's
@@ -3412,6 +3475,52 @@ option {
 
      Nothing here marks the answer: whatever is ticked in the editor is the
      ANSWER KEY's business. This is the worksheet the student writes on. */
+  /* 🔗 词语搭配 on paper: the boxed table, then one item a line with an EMPTY
+     bracket. Nothing here marks the answer — that is the answer key's
+     business; this is the sheet the student writes on. */
+  .print-wm-intro {
+    font-size: 10.5pt;
+    line-height: 1.55;
+    margin-bottom: 8pt;
+  }
+  .print-wm-bank {
+    width: 100%;
+    border-collapse: collapse;
+    border: 1pt solid #000;
+    margin: 0 0 12pt;
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+  .print-wm-bank td {
+    border: 0.75pt solid #000;
+    padding: 7pt 10pt;
+    font-size: 11pt;
+    vertical-align: middle;
+  }
+  .print-wm-bank td b {
+    font-weight: 700;
+    margin-right: 5pt;
+  }
+  .print-wm-items {
+    font-size: 11pt;
+    line-height: 1.6;
+  }
+  /* One item a line, and never split off the bracket it belongs to. */
+  .print-wm-q {
+    margin: 0 0 11pt;
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+  .print-wm-q b {
+    display: inline-block;
+    min-width: 22pt;
+    font-weight: 700;
+  }
+  .print-wm-bracket {
+    margin: 0 2pt;
+    letter-spacing: 0.06em;
+  }
+
   .print-cm-intro {
     font-size: 10.5pt;
     line-height: 1.55;
@@ -7062,6 +7171,7 @@ body.zhime-field .zhime-pill, .zhime-pill.on { display: inline-flex; }
               &#x1F532; Add Fill-in-the-Blanks
             </button>
             <button class="add-block-btn plainanswer-add" onclick="addBlock('clozemcq')" title="短文填空 — one passage with numbered blanks, each blank printing its own four options in brackets">📝 短文填空</button>
+            <button class="add-block-btn plainanswer-add" onclick="addBlock('wordmatch')" title="词语搭配 — a numbered table of words, then short items with a bracket to write the number in">🔗 词语搭配</button>
             <button class="add-block-btn plainanswer-add" onclick="addBlock('clozebank')" title="One passage with numbered blanks and a lettered word bank above it. Students drag a word into each blank and it is struck off the list.">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
               &#x1F524; Add Comprehension Cloze

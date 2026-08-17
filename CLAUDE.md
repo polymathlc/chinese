@@ -584,6 +584,74 @@ nothing saying which four belong to which blank.
     was.
 - Run **`node tools/clozemcq-tests.mjs`** after touching any of it.
 
+### 🔗 词语搭配 — the word-collocation match (`wm*`, block type `wordmatch`) — v2.12.0
+
+The third section of the paper: a boxed, NUMBERED table of words, then a run of
+short items each with a bracket to write a number in.
+
+    1 负责　2 照顾　3 了解 / 4 弟妹　5 指令　6 国旗
+    Q7 （　）情况   Q8 （　）值日   Q9 发出（　）   Q10 挥动（　）
+
+**It is neither of the two clozes**, and the differences are why it is its own
+type. `clozebank` has one bank for one PASSAGE and strikes a word off once
+used, because what is left over is part of the question; here the items are
+independent one-line phrases with no passage, and the paper prints MORE words
+than items — six for four — so two are meant to be left standing. `clozemcq`
+gives each blank its own four options; here every item chooses from the SAME
+table, which is what makes it a matching exercise. And in both of those the
+student supplies a WORD, while this paper says in as many words 把代表它的号码
+填写在括号里 — the answer is the NUMBER.
+
+- **The answer lives IN the item, in the same `[[ ]]` markup every other blank
+  in this app uses, and it marks WHERE THE BRACKET GOES as well as what belongs
+  in it.** `[[了解]]情况` prints （　）情况 and `发出[[指令]]` prints 发出（　）.
+  That is not decoration: the bracket comes before the word in half of these
+  items and after it in the other half, and a format that could only put it at
+  one end could not set the paper.
+- **The NUMBER is derived from the word's position in the table and is never
+  stored**, exactly as an MCQ's option label is. An answer stored as "3" points
+  at a different word the moment the author fixes a typo in the table.
+- **The table can never be missing one of its own answers.** `wmBank` appends
+  any answer the author's table does not contain — the rule `cbBank` is built
+  on, because such a question renders perfectly, prints perfectly and cannot be
+  answered. It is also REPORTED (`wmProblems`), since on a paper it means the
+  table was transcribed wrong.
+- **An item with an empty `[[]]` is saved with NO answer and is never marked.**
+  Never infer one; a guess marks every class that ever sits it against the
+  wrong word. The AI arm obeys the same rule — a model that could not work an
+  item out leaves `answer` out rather than naming the first word of the table.
+- **A used word is NOT struck off the other items' lists**, unlike the word-bank
+  cloze. Nothing on the paper forbids using a word twice, and removing it would
+  both make a legitimate repeat unauthorable and hand the student an
+  elimination the paper does not give them.
+- **Each item registers its own ITEM**, exactly as the two clozes do, so the
+  score, the mistake log, the learning-gap list and `_checkAllPartsMarked` all
+  count a 词语搭配 without knowing what one is. Do NOT add a second marking path.
+- Marking is **exact, instant and free** — the student picks from a closed list,
+  so an AI pass could only turn a right answer wrong.
+- **On SCREEN each bracket is a DROP-DOWN** carrying the paper's number as well
+  as the word (`（3）了解`), for 短文填空's reasons: this is answered on a school
+  phone, a typed number is a number that can be typed wrong, and the marking
+  scheme answers "7（3）". The empty choice is **`value="-1"`, never `""`** —
+  `Number('')` is 0, which is option (1), so an unanswered item would be marked
+  against a word nobody picked. `appearance:auto` on `.wm-pick` is not optional
+  (Tailwind's preflight strips the arrow off it).
+- **The table is read ACROSS** — 1 2 3 on the first row, 4 5 6 on the second —
+  as this paper sets it. The 🔤 cloze bank reads DOWN its columns, because that
+  is how ITS paper sets that one; they are not the same table.
+- **Both print builders carry an explicit `case 'wordmatch'`**, for `fillblank`'s
+  reason and one step worse: the student rendering is a REVIEW rendering with
+  every answer's number already in its bracket, so falling through to it prints
+  the whole exercise filled in.
+- The rule the model reads lives in **`_partsPromptRules()`** with the other
+  section types, so ⚡ Rapid add, 🤖 Build from screenshot, the paper import,
+  📄 Exam Paper and 🔁 Regenerate all read the section. It returns the table and
+  the items as DATA (`before` / `after` / `answer`) rather than the `[[ ]]`
+  markup inline, for `clozemcq`'s reason — and it is **never asked for the
+  number**, because a model that miscounts the table would key every item to
+  the wrong word while looking perfectly right.
+- Run **`node tools/wordmatch-tests.mjs`** after touching any of it.
+
 ## How many questions is a page? (v2.1.0)
 
 A 语文应用 page of **1, 2, 3, 4, 5** holds FIVE questions, not one question with
@@ -1739,6 +1807,15 @@ that door: a line to type in, and the same image model behind it.
     so clicking a word blanks the entire paragraph; `\\W` as the punctuation
     edge eats the word instead and leaves `课外[[]]` — an empty blank in a
     passage that reads perfectly.
+  - `node tools/wordmatch-tests.mjs` — 词语搭配: which NUMBER each item is
+    keyed to, which end of the item the bracket is printed at, and that an
+    unkeyed item stays unkeyed. The number comes from the word's position in
+    the paper's table, so an order or an off-by-one read wrong keys every item
+    to a different word than the class is told — on a page that renders,
+    prints and marks without a murmur. It also pins the two silent structural
+    ones: a table missing one of its own answers (a question that cannot be
+    answered at all) and a print path falling through to the student
+    rendering, which hands out the exercise already filled in.
   - `node tools/clozemcq-tests.mjs` — 短文填空: which option each blank is keyed
     to, that an unticked blank is never given an invented answer, that the
     printed worksheet gives none of them away, and that the key numbers from the
