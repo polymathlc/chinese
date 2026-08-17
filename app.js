@@ -1819,7 +1819,7 @@ async function enterApp(user) {
 
 // App version shown to admins in the sidebar. BUMP THIS on every change you
 // deploy (see CLAUDE.md) so the admin can confirm the latest build is live.
-const APP_VERSION = 'v2.13.0';
+const APP_VERSION = 'v2.14.0';
 
 // =====================================================================
 // THE SUBJECT SWITCHER — one student, four subjects (v2.6.0)
@@ -2064,6 +2064,8 @@ function configureSidebarForRole(role) {
   // float over the login card belonging to nobody.
   luShow();
   _luBindPicker();
+  _luBindDrag();
+  _luLoadPos();
   ensureMobileToggles();
   loadCustomTopics();
   rebuildTopicSelect();
@@ -38717,6 +38719,7 @@ function _ainsteinApplyPos() {
     // Back to the stylesheet's corner — clear the inline overrides entirely.
     b.style.left = b.style.top = b.style.right = b.style.bottom = '';
     _ainsteinPlacePanel();
+    try { luPlace(); } catch (_) {}
     return;
   }
   const w = b.offsetWidth || 88, h = b.offsetHeight || 88;
@@ -38727,6 +38730,10 @@ function _ainsteinApplyPos() {
   b.style.right = 'auto';
   b.style.bottom = 'auto';
   _ainsteinPlacePanel();
+  // The 🔍 lens parks above his head, so it moves when he does — from here,
+  // the ONE place his position is ever applied, rather than from each of his
+  // callers.
+  try { luPlace(); } catch (_) {}
 }
 // The panel opens on whichever side of the bubble has room — above by default,
 // below when he has been parked near the top, and horizontally aligned to his
@@ -38939,8 +38946,13 @@ async function ainsteinSend() {
      eye of a student who has forgotten Ai-nstein is there, and hovering makes him
      lean up and wave with a name tag. All of it is dropped for anyone who asks
      for reduced motion. */
-  #ainsteinBubble { display: none; position: fixed; bottom: 18px; right: 18px; z-index: 890;
-    width: 88px; height: 88px; padding: 0; border: none; border-radius: 50%; cursor: grab;
+  /* His size, his margin and the gap above him are TOKENS, declared beside the
+     design tokens in index.html — the 🔍 look-up lens parks directly above him
+     and reads the same three, so shrinking him here moves the lens with him
+     instead of leaving it floating over his head. The fallbacks keep this
+     block working on its own if it is ever lifted out. */
+  #ainsteinBubble { display: none; position: fixed; bottom: var(--ainstein-edge, 18px); right: var(--ainstein-edge, 18px); z-index: 890;
+    width: var(--ainstein-size, 66px); height: var(--ainstein-size, 66px); padding: 0; border: none; border-radius: 50%; cursor: grab;
     background: var(--surface, #fff); box-shadow: 0 8px 26px rgba(20,18,16,0.26);
     touch-action: none;   /* the drag owns the gesture; the page must not scroll under it */
     transition: transform .22s cubic-bezier(.34,1.56,.64,1), box-shadow .22s ease; }
@@ -39001,7 +39013,9 @@ async function ainsteinSend() {
     display: flex; align-items: center; justify-content: center; box-shadow: 0 2px 6px rgba(0,0,0,0.25); }
   #ainsteinBadge.out { background: #b3261e; }
 
-  #ainsteinPanel { display: none; position: fixed; bottom: 118px; right: 18px; z-index: 895;
+  #ainsteinPanel { display: none; position: fixed; z-index: 895;
+    bottom: calc(var(--ainstein-edge, 18px) + var(--ainstein-size, 66px) + var(--ainstein-gap, 12px));
+    right: var(--ainstein-edge, 18px);
     width: min(400px, calc(100vw - 36px)); max-height: min(560px, calc(100vh - 130px));
     background: var(--surface, #fff); border: 1px solid var(--border, #e3e6e4); border-radius: 20px;
     box-shadow: 0 20px 60px rgba(20,18,16,0.28); overflow: hidden;
@@ -39173,11 +39187,12 @@ async function ainsteinSend() {
   #ainsteinCredits { margin-top: 10px; font-size: 0.74rem; color: var(--text-muted, #666c71); text-align: center; }
 
   /* The daily-quest chip lives in the same corner — lift it above the bubble. */
-  #questChip { bottom: 120px !important; }
+  #questChip { bottom: calc(var(--ainstein-edge, 18px) + var(--ainstein-size, 66px) + var(--ainstein-gap, 12px) + 2px) !important; }
   @media (max-width: 560px) {
-    #ainsteinBubble { width: 72px; height: 72px; bottom: 14px; right: 14px; }
-    #ainsteinPanel { bottom: 98px; right: 12px; left: 12px; width: auto; max-height: calc(100vh - 130px); }
-    #questChip { bottom: 100px !important; }
+    /* Only what a phone really changes — the SIZE comes from the tokens, which
+       have their own narrow-screen values. Repeating it here is how the bubble
+       and the lens above it end up disagreeing about where his top edge is. */
+    #ainsteinPanel { right: 12px; left: 12px; width: auto; max-height: calc(100vh - 130px); }
     /* No room for the name tag next to a thumb-sized bubble. */
     #ainsteinBubble .ainstein-tag { display: none; }
   }
@@ -40831,9 +40846,13 @@ const LU_MIN_DRAG = 12;          // px: below this it was a click, not a drag
 const LU_MAX_CHARS = 120;        // never send a whole page to the model
 const LU_CROP_MAX = 900;         // px on the long side of a cropped picture
 const LU_SPEAK_RATE = 0.85;      // a shade slow — this is being learned, not skimmed
-let _lu = null;                  // the live drag: { x0, y0, x1, y1 }
+const LU_GAP = 12;               // px between the lens and Ai-nstein's head
+const LU_DRAG_SLOP = 5;          // px of movement before a tap becomes a drag
+let _lu = null;                  // the live drag OF THE SELECTION: { x0, y0, x1, y1 }
 let _luBusy = false;             // one look-up at a time
 let _luVoices = null;
+let _luPos = null;               // { x, y } of the button's top-left, or null = above Ai-nstein
+let _luDrag = null;              // the live drag OF THE BUTTON
 
 function luAvailable() { return !!currentUser; }
 // Shown from configureSidebarForRole — the ONE function every signed-in path
@@ -40842,12 +40861,122 @@ function luAvailable() { return !!currentUser; }
 // belonging to nobody.
 function luShow() {
   const fab = document.getElementById('luFab');
-  if (fab) fab.style.display = luAvailable() ? 'flex' : 'none';
+  if (!fab) return;
+  fab.style.display = luAvailable() ? 'flex' : 'none';
+  luPlace();
+}
+
+// ---- where the button sits --------------------------------------------------
+// It parks DIRECTLY ABOVE Ai-nstein, and that is the whole default: the
+// stylesheet puts it there from his own size tokens, so with neither of them
+// dragged there is nothing for JavaScript to do and nothing that can disagree
+// with the CSS.
+//
+// Two things move it, in this order of priority:
+//   1. its OWN saved spot — a student who dragged the lens somewhere put it
+//      there on purpose, and Ai-nstein wandering off afterwards must not drag
+//      it back;
+//   2. Ai-nstein having been dragged — then the stylesheet's corner is no
+//      longer where he is, so the lens is placed over his live rectangle.
+function _luPosKey() { return 'zhLuPos:' + ((currentUser && currentUser.uid) || 'anon'); }
+function _luLoadPos() {
+  try {
+    const p = JSON.parse(localStorage.getItem(_luPosKey()) || 'null');
+    _luPos = (p && typeof p.x === 'number' && typeof p.y === 'number') ? p : null;
+  } catch (_) { _luPos = null; }
+  luPlace();
+}
+function _luSavePos() {
+  try {
+    if (_luPos) localStorage.setItem(_luPosKey(), JSON.stringify(_luPos));
+    else localStorage.removeItem(_luPosKey());
+  } catch (_) {}
+}
+function _luApply(fab, p) {
+  fab.style.left = p.x + 'px';
+  fab.style.top = p.y + 'px';
+  fab.style.right = 'auto';
+  fab.style.bottom = 'auto';
+}
+function luPlace() {
+  const fab = document.getElementById('luFab');
+  if (!fab) return;
+  const w = fab.offsetWidth || 44, h = fab.offsetHeight || 44;
+  // `_ainsteinClamp` keeps both floats the same distance off the edges — two
+  // helpers in one corner obeying two different margins is a mess nobody can
+  // put right by dragging. Read at CALL time: these live further down the file.
+  if (_luPos) { _luPos = _ainsteinClamp(_luPos.x, _luPos.y, w, h); _luApply(fab, _luPos); return; }
+  const b = document.getElementById('ainsteinBubble');
+  // He is in his own corner → the stylesheet has already put the lens above
+  // him, and an inline coordinate could only disagree with it.
+  if (!b || !_ainsteinPos) { fab.style.left = fab.style.top = fab.style.right = fab.style.bottom = ''; return; }
+  const br = b.getBoundingClientRect();
+  // Above him, unless he has been parked so high that there is no room — then
+  // below, exactly as his own panel flips.
+  let y = br.top - h - LU_GAP;
+  if (y < AINSTEIN_EDGE) y = br.bottom + LU_GAP;
+  _luApply(fab, _ainsteinClamp(br.left + (br.width - w) / 2, y, w, h));
+}
+
+// ---- dragging the button ----------------------------------------------------
+// The same shape as Ai-nstein's drag, for the same reasons: a slop before a tap
+// becomes a drag, pointer capture so a fast finger cannot escape it, and the
+// click that follows a drag swallowed so putting the lens down does not open
+// the picker. Double-click sends it back over his head.
+function _luBindDrag() {
+  const fab = document.getElementById('luFab');
+  if (!fab || fab._dragBound) return;
+  fab._dragBound = true;
+  fab.addEventListener('dragstart', e => e.preventDefault());
+  fab.addEventListener('pointerdown', e => {
+    if (e.button != null && e.button !== 0) return;
+    fab._eatClick = false;
+    const r = fab.getBoundingClientRect();
+    _luDrag = { id: e.pointerId, dx: e.clientX - r.left, dy: e.clientY - r.top,
+                w: r.width, h: r.height, moved: false, x0: e.clientX, y0: e.clientY };
+    try { fab.setPointerCapture(e.pointerId); } catch (_) {}
+  });
+  fab.addEventListener('pointermove', e => {
+    const d = _luDrag;
+    if (!d || d.id !== e.pointerId) return;
+    if (!d.moved && Math.hypot(e.clientX - d.x0, e.clientY - d.y0) < LU_DRAG_SLOP) return;
+    if (!d.moved) { d.moved = true; fab.classList.add('dragging'); }
+    e.preventDefault();
+    _luPos = _ainsteinClamp(e.clientX - d.dx, e.clientY - d.dy, d.w, d.h);
+    _luApply(fab, _luPos);
+  });
+  const end = e => {
+    const d = _luDrag;
+    if (!d || d.id !== e.pointerId) return;
+    _luDrag = null;
+    try { fab.releasePointerCapture(e.pointerId); } catch (_) {}
+    if (d.moved) {
+      fab.classList.remove('dragging');
+      _luSavePos();
+      // Swallow the click the browser fires after a drag, or the picker opens
+      // the moment the lens is put down. Cleared by the next pointerdown.
+      fab._eatClick = true;
+    }
+  };
+  fab.addEventListener('pointerup', end);
+  fab.addEventListener('pointercancel', end);
+  fab.addEventListener('dblclick', e => {
+    if (!_luPos) return;
+    e.preventDefault(); e.stopPropagation();
+    _luPos = null;
+    _luSavePos();
+    luPlace();
+    showToast('🔍 back above Ai-nstein', 'info');
+  });
+  window.addEventListener('resize', () => luPlace());
 }
 
 // ---- the selection ----------------------------------------------------------
 function luStart() {
   if (!luAvailable()) return;
+  // That click was the end of a drag, not a press.
+  const fab = document.getElementById('luFab');
+  if (fab && fab._eatClick) { fab._eatClick = false; return; }
   const ov = document.getElementById('luOverlay');
   const box = document.getElementById('luBox');
   if (!ov || !box) return;
@@ -41529,3 +41658,4 @@ window.luStart = luStart;
 window.luCancel = luCancel;
 window.luSpeak = luSpeak;
 window.luCloseCard = luCloseCard;
+window.luPlace = luPlace;

@@ -244,11 +244,37 @@ what it means, an example sentence, and a 🔊 for each.
   in front of them, and anything painted over that layer would be visible,
   boxable and unclickable at the same time. `touch-action: none` is what stops
   the first drag on a phone scrolling the page instead.
-- **The button lives on the RIGHT EDGE, vertically centred**, and that is not a
-  taste call: the top-right corner is the subject switcher's and the
-  bottom-right already holds the 拼音 pill and the work-session bar. It hides
-  itself while the card is open, because the card carries its own *look up
-  another* and on a short screen the two overlap.
+- **The button parks DIRECTLY ABOVE Ai-nstein, and the stylesheet is the whole
+  default** (v2.14.0). `--ainstein-size` / `--ainstein-edge` / `--ainstein-gap`
+  are declared beside the design tokens in `index.html`, and FOUR rules read
+  them — his bubble, his panel's offset, the daily-quest chip's, and the lens's
+  `right`/`bottom`. That is what makes "he got smaller" a one-line change
+  instead of four numbers that drift; his CSS is injected from `app.js` at
+  runtime and reads the same tokens.
+- **The lens is DRAGGABLE, and `luPlace()` decides where it goes in a strict
+  order of priority**: its own saved spot first, then Ai-nstein's live
+  rectangle if HE has been dragged, then nothing at all — because when neither
+  has moved, the stylesheet has already put it above him and an inline
+  coordinate could only disagree with it. A student who dragged the lens
+  somewhere put it there on purpose, so him wandering off afterwards must not
+  drag it back; that is the one ordering that fails silently.
+- **It follows him from `_ainsteinApplyPos`** — the ONE place his position is
+  ever applied — in BOTH branches (moved, and put back in his corner), never
+  from that function's three callers.
+- **The call is wrapped in `try`/`catch`, and that is not defensive noise.**
+  The lens block sits BELOW Ai-nstein's in `app.js`, and his mount IIFE runs at
+  module-evaluation time — so `luPlace` reads `_luPos` in its temporal dead
+  zone on that first call and throws. Swallowing it is right: the button is
+  hidden until sign-in anyway, and `luShow()` places it then.
+- **The drag is Ai-nstein's drag, in the same shape**: a slop before a tap
+  becomes a drag, pointer capture, `_ainsteinClamp` so both floats keep the
+  same margin off the edges, the spot remembered per account in `localStorage`,
+  double-click to send it back over his head — and the click that ends a drag
+  swallowed (`_eatClick`), or putting the lens down opens the picker.
+- If he is parked at the very top, the lens flips BELOW him rather than being
+  clamped onto his face — the same flip his own panel does.
+- It hides itself while the card is open, because the card carries its own
+  *look up another* and on a short screen the two overlap.
 - It is turned on from **`configureSidebarForRole`**, the one function every
   signed-in path goes through, for the subject switcher's reason.
 - Run **`node tools/lookup-lens-tests.mjs`** after touching any of it.

@@ -426,6 +426,22 @@
   background: transparent !important; color: #65625e !important; box-shadow: none !important;
 }
 /* ========== CSS VARIABLES & RESET ========== */
+/* ---- The two floating helpers ------------------------------------------
+   Ai-nstein and the 🔍 look-up lens share one corner, and the lens sits
+   directly above him — so his size is a TOKEN rather than a number typed into
+   the three rules that key off it (the panel's offset, the daily-quest chip's,
+   and the lens's). His CSS is injected from app.js at runtime and reads these
+   same tokens, which is what stops the two drifting apart. */
+:root {
+  --ainstein-size: 66px;    /* was 88 — he is a helper, not the page */
+  --ainstein-edge: 18px;    /* his margin from the corner */
+  --ainstein-gap: 12px;     /* between him and whatever sits above him */
+  --lu-size: 44px;
+}
+@media (max-width: 560px) {
+  :root { --ainstein-size: 54px; --ainstein-edge: 14px; --lu-size: 40px; }
+}
+
 :root {
   /* ---- Ink & Emerald ----------------------------------------------------
      Cool neutral greys, near-black ink, ONE jewel emerald doing the accent
@@ -6466,7 +6482,7 @@ body.zhime-field .zhime-pill, .zhime-pill.on { display: inline-flex; }
      switcher spent nine versions inside the lore book in the Maths app and no
      student ever saw it. -->
 <button type="button" class="lu-fab" id="luFab" style="display:none;" onclick="luStart()"
-        title="查一个词语 — draw a box around a word to see its pinyin, meaning and an example, and hear it read aloud"
+        title="查一个词语 — draw a box around a word to see its pinyin, meaning and an example, and hear it read aloud. Drag me anywhere; double-click to send me back above Ai-nstein."
         aria-label="Look up a word">🔍</button>
 
 <div class="lu-overlay" id="luOverlay" style="display:none;">
@@ -9986,20 +10002,33 @@ Q22 邻居总是对父亲说：“你儿子可真‘厉害’！”是因为____
    bar. Middle-right is the one place on this app's screen that is always free —
    and on a phone it is exactly where a thumb rests. */
 .lu-fab {
-  position: fixed; right: 12px; top: 50%; transform: translateY(-50%);
-  z-index: 150;
+  /* Parked directly above Ai-nstein and centred on him, from the SAME tokens
+     his own rules use — so shrinking him moves the lens with him and the two
+     can never drift apart. Once either one has been dragged, JS takes over
+     with inline left/top (luPlace); until then this stylesheet is the whole
+     story, which is why the default needs no JavaScript at all. */
+  position: fixed;
+  right: calc(var(--ainstein-edge) + (var(--ainstein-size) - var(--lu-size)) / 2);
+  bottom: calc(var(--ainstein-edge) + var(--ainstein-size) + var(--ainstein-gap));
+  z-index: 891;             /* just over Ai-nstein (890), under his panel (895) */
   display: none; align-items: center; justify-content: center;
-  width: 46px; height: 46px; border-radius: 50%;
+  width: var(--lu-size); height: var(--lu-size); border-radius: 50%;
+  cursor: grab;
+  touch-action: none;       /* the drag owns the gesture; the page must not scroll under it */
+  -webkit-user-select: none; user-select: none;
   border: 1px solid var(--border); background: var(--surface);
   /* A <button> does not inherit colour — without this its glyph falls back to
      the browser's own button text. */
   color: var(--text);
   box-shadow: 0 6px 20px rgba(16, 24, 32, 0.16);
-  font-family: inherit; font-size: 1.15rem; line-height: 1; cursor: pointer;
+  font-family: inherit; font-size: 1.1rem; line-height: 1;
   transition: transform .15s ease, box-shadow .15s ease;
 }
-.lu-fab:hover { transform: translateY(-50%) scale(1.06); box-shadow: 0 10px 26px rgba(16, 24, 32, 0.22); }
+.lu-fab:hover { transform: scale(1.08); box-shadow: 0 10px 26px rgba(16, 24, 32, 0.22); }
 .lu-fab:focus-visible { outline: 2px solid var(--accent-blue, #2d6ca8); outline-offset: 3px; }
+/* While being carried: lifted, still, and never animated, so it tracks the
+   finger exactly. Same treatment Ai-nstein's bubble gets. */
+.lu-fab.dragging { cursor: grabbing; transform: scale(1.1); box-shadow: 0 18px 38px rgba(16,24,32,0.28); transition: none; }
 
 /* The picking layer sits above EVERYTHING, including the app's own modals and
    the IME bar (z-index 100000). A student looks a word up in whatever is in
