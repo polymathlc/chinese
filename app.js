@@ -1819,7 +1819,7 @@ async function enterApp(user) {
 
 // App version shown to admins in the sidebar. BUMP THIS on every change you
 // deploy (see CLAUDE.md) so the admin can confirm the latest build is live.
-const APP_VERSION = 'v2.11.0';
+const APP_VERSION = 'v2.12.0';
 
 // =====================================================================
 // THE SUBJECT SWITCHER — one student, four subjects (v2.6.0)
@@ -3430,6 +3430,15 @@ function createBlock(type) {
       block.startNum = CM_START_DEFAULT;
       block.intro = '';         // blank → generated from the passage itself
       break;
+    case 'wordmatch':
+      // 词语搭配: a numbered table of words, then short items each with a
+      // bracket. Same [[double bracket]] markup, holding the ANSWER and
+      // marking where the bracket goes: `[[了解]]情况` / `发出[[指令]]`.
+      block.text = '';
+      block.bank = '';          // the paper's table, in the paper's order
+      block.startNum = WM_START_DEFAULT;
+      block.intro = '';         // blank → generated from the table itself
+      break;
     case 'clozebank':
       // Same [[double bracket]] markup as fillblank — one syntax for blanking a
       // word — plus the bank the student picks from and the paper's numbering.
@@ -4581,6 +4590,7 @@ function renderBlocks() {
       case 'fillblank':   badgeClass = 'plainanswer-badge'; badgeIcon = '🔲'; badgeLabel = 'Fill in the Blanks'; break;
       case 'clozebank':   badgeClass = 'plainanswer-badge'; badgeIcon = '🔤'; badgeLabel = 'Comprehension Cloze (word bank)'; break;
       case 'clozemcq':    badgeClass = 'plainanswer-badge'; badgeIcon = '📝'; badgeLabel = '短文填空 Cloze (options per blank)'; break;
+      case 'wordmatch':   badgeClass = 'plainanswer-badge'; badgeIcon = '🔗'; badgeLabel = '词语搭配 Word match (number in the bracket)'; break;
       case 'synthesis':   badgeClass = 'plainanswer-badge'; badgeIcon = '✍️'; badgeLabel = 'Synthesis & Transformation'; break;
       case 'workingSpace':badgeClass = 'plainanswer-badge'; badgeIcon = block.annotate ? '✍️' : '🧮'; badgeLabel = block.annotate ? 'Annotation Working Area' : 'Working Space'; break;
       case 'commonMistake':badgeClass = 'explanation-badge'; badgeIcon = '⚠️'; badgeLabel = 'Common Mistake'; break;
@@ -5701,6 +5711,32 @@ function renderImportedBlockEditorBody(block) {
           <div id="cmPrev_${id}" class="cm-ed-prev">${_cmEditorPreviewHtml(block)}</div>
         </div>`;
     }
+    case 'wordmatch': {
+      return `
+        <div class="block-body">
+          <label style="font-size:0.85rem;font-weight:600;display:block;margin:0 0 6px;">The paper's word table <span style="font-weight:400;color:var(--text-muted);">— in the paper's own order, one per line (or separated by 、 , ;). They are numbered 1, 2, 3… down that order.</span></label>
+          <textarea class="form-input" rows="3" placeholder="负责、照顾、了解、弟妹、指令、国旗"
+                    style="width:100%;box-sizing:border-box;font-family:inherit;font-size:0.92rem;line-height:1.7;resize:vertical;"
+                    oninput="saveBlockField('${id}','bank',this.value); wmSyncEditor('${id}')">${escapeHtml(_wmSplitBank(block.bank).join('\n'))}</textarea>
+
+          <label style="font-size:0.85rem;font-weight:600;display:block;margin:14px 0 6px;">The items <span style="font-weight:400;color:var(--text-muted);">— one a line. Put <code>[[答案]]</code> where the bracket goes: <code>[[了解]]情况</code> prints （ ）情况, <code>发出[[指令]]</code> prints 发出（ ）.</span></label>
+          <textarea id="wmText_${id}" class="form-input" rows="6" placeholder="[[了解]]情况&#10;[[负责]]值日&#10;发出[[指令]]&#10;挥动[[国旗]]"
+                    style="width:100%;box-sizing:border-box;font-family:inherit;font-size:0.95rem;line-height:2;resize:vertical;"
+                    oninput="saveBlockField('${id}','text',this.value); wmSyncEditor('${id}')">${escapeHtml(block.text || '')}</textarea>
+
+          <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:10px 0 6px;">
+            <button class="btn btn-outline" type="button" style="padding:5px 12px;font-size:0.8rem;" onclick="wmInsertItem('${id}')">➕ Insert an item</button>
+            <label class="cm-ed-field">First item is numbered
+              <input class="form-input" type="number" min="1" max="999" value="${_wmStart(block)}"
+                     oninput="saveBlockNum('${id}','startNum',this.value,1,999); wmSyncEditor('${id}')"></label>
+            <span id="wmMeta_${id}" style="font-size:0.78rem;color:var(--text-muted);"></span>
+          </div>
+          <div style="font-size:0.78rem;color:var(--text-muted);margin:8px 0 6px;line-height:1.6;">Click a word to set an item's answer — <strong>an item left unset is saved with no answer rather than a guess</strong>, and it is not marked. A word the table is missing is added to the end of it, so a question can never be unanswerable.</div>
+          <div id="wmKeys_${id}" class="cm-key-wrap">${_wmKeyRowsHtml(id, block)}</div>
+          <div style="font-size:0.78rem;color:var(--text-muted);margin:14px 0 4px;">Student preview:</div>
+          <div id="wmPrev_${id}" class="cb-ed-prev">${_wmEditorPreviewHtml(block)}</div>
+        </div>`;
+    }
     case 'clozebank': {
       const blanks = _cbBlanks(block);
       const bank = cbBank(block);
@@ -5861,6 +5897,12 @@ function renderImportedBlockStudent(block, q) {
       return cmHasBlanks(block)
         ? `<div class="cm-readonly" style="margin:10px 0;">${_cmEditorPreviewHtml(block)}</div>`
         : `<div class="cm-passage" style="margin:10px 0;">${escapeHtml(stripHtml(block.text || ''))}</div>`;
+    // Also a REVIEW rendering, with each answer's number already in its
+    // bracket — hence the explicit case in both print builders.
+    case 'wordmatch':
+      return wmHasItems(block)
+        ? `<div class="wm-readonly" style="margin:10px 0;">${_wmEditorPreviewHtml(block)}</div>`
+        : `<div class="wm-items" style="margin:10px 0;">${escapeHtml(stripHtml(block.text || ''))}</div>`;
     case 'clozebank':
       return cbHasBlanks(block)
         ? `<div style="margin:10px 0;">${_cbEditorPreviewHtml(block)}</div>`
@@ -9397,6 +9439,36 @@ function buildBlocksFromAi(data) {
             intro: stripBrackets(b.intro || '')
           });
         }
+      } else if (t === 'wordmatch') {
+        // 词语搭配: the paper's word table, then one short item per bracket.
+        // The model returns the table and the items as DATA — the word that
+        // belongs in each bracket, and what is printed either side of it —
+        // rather than the `[[ ]]` markup inline, for `clozemcq`'s reason: a
+        // model asked to place brackets inside prose gets them wrong far more
+        // often than it gets the collocation wrong.
+        //
+        // It is never asked for the NUMBER. The number is the word's position
+        // in the table, and a model that miscounts the table would key every
+        // item to the wrong word while looking perfectly right.
+        const bank = _wmSplitBank(b.bank || b.words || []);
+        const rawItems = Array.isArray(b.items) ? b.items : [];
+        const text = rawItems.map(it => {
+          const before = stripBrackets(String((it && it.before) || '')).trim();
+          const after = stripBrackets(String((it && it.after) || '')).trim();
+          // An answer the model did not give stays EMPTY — never guessed at,
+          // and never the first word of the table. See wmUnanswered.
+          const ans = stripBrackets(String((it && (it.answer || it.word)) || '')).trim();
+          return (before || after) ? (before + '[[' + ans + ']]' + after) : '';
+        }).filter(Boolean).join('\n');
+        if (text) {
+          const start = Number(b.startNum);
+          blocks.push({
+            id: generateBlockId(), type: 'wordmatch', text,
+            bank: bank.join('\n'),
+            startNum: (isFinite(start) && start >= 1 && start <= 999) ? Math.round(start) : WM_START_DEFAULT,
+            intro: stripBrackets(b.intro || '')
+          });
+        }
       }
       // An explicit part from the AI, stamped on whatever this entry built.
       //
@@ -9995,7 +10067,7 @@ function _aiBuildQuestionPrompt(isPdf, imageCount, levelHint) {
     `Each entry is: {"title":"short title","topic":"<closest topic>","category":"<closest category>","tags":["..."],"questionType":"mcq, open or passage","blocks":[ ...ordered blocks... ]}\n` +
     `A source holding ONE question returns an array of ONE entry. Give EVERY entry its own title, topic, category and tags — never leave them off the later entries.\n` +
     `- THE PAPER'S QUESTION NUMBER IS ONLY THE SIGNAL that they are separate questions. Do NOT keep it anywhere: no "part" field, and never write "2"、"2." 、"2、" or "（2）" into the text of any block. A bank question stands on its own, and one that opens at question 61 reads as though sixty are missing.\n` +
-    `- Give each entry the blocks that match what THAT question actually is, decided per question and not once for the page: a sentence-rewrite (改写句子) becomes a "synthesis" block, a multiple-choice one an "mcq" block, a 短文填空 passage a "clozemcq" block, an open question a text block plus an answer block. Two questions on the same page can be different types.\n` +
+    `- Give each entry the blocks that match what THAT question actually is, decided per question and not once for the page: a sentence-rewrite (改写句子) becomes a "synthesis" block, a multiple-choice one an "mcq" block, a 短文填空 passage a "clozemcq" block, a 词语搭配 word-matching section a "wordmatch" block, an open question a text block plus an answer block. Two questions on the same page can be different types.\n` +
     `Each item in "blocks" is ONE of these objects:\n` +
     (multi
       ? `  {"type":"image","page":<which attached image, 1-based>,"box_2d":[ymin,xmin,ymax,xmax]}   (one diagram/picture/graph/figure/experimental setup OR one data table — "page" says which attached image it is on, and box_2d is the rectangle you draw around it on THAT image)\n`
@@ -10052,6 +10124,9 @@ function _partsPromptRules() {
     `    {"type":"clozemcq","startNum":16,"intro":"根据短文的内容和上下文的意思，从括号中选出适当的词语。","passage":"课外活动是学生生活的一部分。……课外活动的种类非常丰富。{{}}是体育、艺术，还是团队活动……","blanks":[{"options":["总算","就算","不管","尽管"],"correctIndex":2}]}\n` +
     `  "passage" is the WHOLE passage transcribed exactly, with each blank replaced by the placeholder {{}} — put NOTHING else where the blank was: no number, no brackets, no options. "blanks" lists the choices in paper order, one entry per {{}}, in the same order. "startNum" is the number the paper gives the FIRST blank. Work out "correctIndex" (0-based) yourself from the passage; if you genuinely cannot, LEAVE IT OUT for that blank rather than guessing — a guessed answer marks a whole class against the wrong word.\n` +
     `  Do NOT use this for the OTHER cloze, the one with a single lettered word bank (A)–(Q) printed above the passage and no options at the blanks.\n` +
+    `- 词语搭配 (WORD MATCHING — A NUMBERED TABLE OF WORDS, THEN BRACKETS) — a section headed 词语搭配 that prints a boxed TABLE of numbered words ("1 负责　2 照顾　3 了解　4 弟妹　5 指令　6 国旗"), then short items each with a bracket to write a number in: "Q7 （　）情况", "Q9 发出（　）". That whole section is ONE question, never one per item. Use a single {"type":"wordmatch"} block:\n` +
+    `    {"type":"wordmatch","startNum":7,"intro":"从所提供的词语中，选出可以和各题搭配成合理词组的词语。然后把代表它的号码（1–6）填写在括号里。","bank":["负责","照顾","了解","弟妹","指令","国旗"],"items":[{"before":"","after":"情况","answer":"了解"},{"before":"","after":"值日","answer":"负责"},{"before":"发出","after":"","answer":"指令"},{"before":"挥动","after":"","answer":"国旗"}]}\n` +
+    `  "bank" is the table transcribed IN THE PAPER'S OWN ORDER, reading across each row — that order is what numbers the words, so a word out of place keys every item to the wrong number. "items" is one entry per bracket, in paper order: "before" is what is printed BEFORE the bracket and "after" what is printed after it, and one of the two is normally empty. "answer" is the WORD from the table that belongs in that bracket — the word itself, never its number, and never a word that is not in the table. Work each one out yourself; if you genuinely cannot, LEAVE "answer" OUT for that item rather than guessing. "startNum" is the number the paper gives the FIRST item. The table always prints MORE words than there are items — the spare ones are distractors and belong in "bank" like the rest.\n` +
     `- 阅读理解问答 (A PASSAGE ANSWERED IN WRITING) — a passage followed by numbered questions the student ANSWERS IN SENTENCES, with ruled boxes or 作答簿 lines instead of options ("B组（Q34—Q40，7题22分）根据短文和上下文的意思，回答问题"). It is ONE question, the same as any other passage. Transcribe the WHOLE passage into text blocks first, with NO "part". Then, for each numbered question in order: one "text" block carrying its letter ("part":"a") with the question wording, and directly under it one "plainanswer" block — carrying the SAME letter — holding the model answer you work out from the passage.\n` +
     `- "marks": every answer block takes the marks the paper prints against that question — {"type":"plainanswer","part":"a","text":"…","marks":2} for （2分）. Where one question prints two allocations ("……？（1分）为什么？（3分）") give it the TOTAL, 4. The marks are what the answer is scored out of and how deep an answer the marker expects, so a question left without them is marked as though every question on the paper were worth the same.\n` +
     `- Do NOT turn a written-answer question into an "mcq" block, and never invent options for it. If the paper gives the student ruled lines, the answer is written.\n` +
@@ -12704,6 +12779,9 @@ function getQuestionPreview(q) {
     if (block.type === 'clozebank' && (block.text || '').trim()) {
       return clean('Cloze: ' + _fbParse(block.text).map(p => p.type === 'blank' ? '____' : p.text).join('')).substring(0, 150);
     }
+    if (block.type === 'wordmatch' && (block.text || '').trim()) {
+      return clean('词语搭配: ' + wmItems(block).map(it => it.before + '（　）' + it.after).join('  ')).substring(0, 150);
+    }
     if (block.type === 'clozemcq' && (block.text || '').trim()) {
       return clean('短文填空: ' + _cmParse(block.text).map(p => p.type === 'blank' ? '____' : p.text).join('')).substring(0, 150);
     }
@@ -15275,6 +15353,20 @@ function doPrintWorksheetOpen() {
             if (ownS && qPartLabelFirst(q.blocks, block)) qHtml += `<div class="print-text-block print-has-part"><span class="print-part-label">${escapeHtml(qPartLabel(ownS))}</span></div>`;
             qHtml += syPrintHtml(block);
             _pushBlockAnswerKey(qSections, block, bPart);
+          }
+          break;
+        }
+        // Explicit, for `fillblank`'s reason and one step worse: the student
+        // rendering of a 词语搭配 is a REVIEW rendering with every answer's
+        // number already in its bracket, so falling through to it prints a
+        // worksheet with the whole exercise filled in. Both print builders
+        // carry the identical case — keep the two in step.
+        case 'wordmatch': {
+          if (wmHasItems(block)) {
+            qHtml += wmPrintHtml(block);
+            _pushAnswerKeySection(qSections, '词语搭配', wmAnswerKeyText(block), bPart);
+          } else {
+            qHtml += `<div class="print-text-block">${escapeHtmlKeepLines(block.text || '')}</div>`;
           }
           break;
         }
@@ -21325,6 +21417,7 @@ function buildOpenBody(q, containerSel, markCfg) {
   const fbBlocks = [];
   const cbBlocks = [];
   const cmBlocksOut = [];
+  const wmBlocksOut = [];
   const isAnnot = !!(q && q.annotation);
   let annotCount = 0;
   // Blocks are grouped into visual PARTS: a run of question content (text,
@@ -21449,6 +21542,27 @@ function buildOpenBody(q, containerSel, markCfg) {
         );
         break;
       }
+      case 'wordmatch': {
+        // Each item is an ITEM, exactly as the two clozes register their
+        // blanks — so the score, the mistake log and "have all the parts been
+        // marked?" all count a 词语搭配 without knowing what one is.
+        const wmIt = wmItems(block);
+        if (!wmIt.length) { add(`<div class="wm-items">${escapeHtml(stripHtml(block.text || ''))}</div>`); break; }
+        const wmStart = _wmStart(block);
+        const wmBk = wmBank(block);
+        const wmOidxs = wmIt.map((it, i) => {
+          const oidx = items.length;
+          items.push({
+            label: [pOf(block), '搭配 ' + (wmStart + i)].filter(Boolean).join(' '),
+            model: it.answer || '',
+            block, field: 'text'
+          });
+          return oidx;
+        });
+        wmBlocksOut.push({ blockId: block.id, oidxs: wmOidxs, items: wmIt, startNum: wmStart, bank: wmBk });
+        addAnswer(wmStudentHtml(block, containerSel, wmOidxs));
+        break;
+      }
       case 'clozemcq': {
         // Each blank is an ITEM, exactly as the word-bank cloze below registers
         // its own — so the score, the mistake log and "have all the parts been
@@ -21509,7 +21623,9 @@ function buildOpenBody(q, containerSel, markCfg) {
   // A cloze is answered by dragging, never by writing on paper, so its blanks
   // count with the fill-in-the-blank ones: both keep the "photo of your written
   // work" bar away from a question that has nothing to photograph.
-  const fbItemCount = fbBlocks.concat(cbBlocks).concat(cmBlocksOut).reduce((s, b) => s + b.oidxs.length, 0);
+  // 词语搭配 joins them for the same reason: it is answered from a drop-down,
+  // so there is nothing to photograph.
+  const fbItemCount = fbBlocks.concat(cbBlocks).concat(cmBlocksOut).concat(wmBlocksOut).reduce((s, b) => s + b.oidxs.length, 0);
   if (annotCount) {
     // Each annotation pad carries its own Check / AI Check bar; just add the
     // how-to hint once at the end instead of the photo bar / "nothing" note.
@@ -21527,6 +21643,7 @@ function buildOpenBody(q, containerSel, markCfg) {
   _fbStore[containerSel] = fbBlocks;
   _cbStore[containerSel] = cbBlocks;
   _cmStore[containerSel] = cmBlocksOut;
+  _wmStore[containerSel] = wmBlocksOut;
   _openQStore[containerSel] = q;
   _openSurfaceCfg[containerSel] = markCfg || {};
   _openPartResults[containerSel] = {};
@@ -22509,6 +22626,398 @@ function cmInsertBlank(id) {
   cmSyncEditor(id);
 }
 
+// =====================================================================
+// 🔗 词语搭配 — the word-collocation match (`wm*`, block type `wordmatch`)
+//
+// The third section of a Singapore primary 华文 paper: a numbered TABLE of
+// words, then a run of short items each with a bracket to write a number in.
+//
+//     ┌──────────┬──────────┬──────────┐
+//     │ 1 负责   │ 2 照顾   │ 3 了解   │
+//     │ 4 弟妹   │ 5 指令   │ 6 国旗   │
+//     └──────────┴──────────┴──────────┘
+//     Q7  （   ）情况      Q9   发出（   ）
+//     Q8  （   ）值日      Q10  挥动（   ）
+//
+// It is NOT the 🔤 comprehension cloze (`cb*`) and NOT the 📝 短文填空 (`cm*`),
+// and the differences are the whole reason it is its own type:
+//
+//   • `clozebank` has one bank for one PASSAGE, and a word is struck off once
+//     used, because what is left over is part of the question. Here the items
+//     are independent one-line phrases with no passage at all, and the paper
+//     prints MORE words than questions — 6 words for 4 items — so two are
+//     meant to be left standing.
+//   • `clozemcq` gives each blank its own four options. Here every item chooses
+//     from the SAME table, which is what makes it a matching exercise.
+//   • In both of those the student writes or picks a WORD. Here the paper says
+//     in as many words: 把代表它的号码填写在括号里 — write the NUMBER. So the
+//     number is the answer, and it comes from the word's position in the table.
+//
+// SIX things worth keeping:
+//
+// 1. The answer lives IN the item, in the same `[[ ]]` markup every other
+//    blank in this app uses, and it marks WHERE THE BRACKET GOES as well as
+//    what belongs in it: `[[了解]]情况` prints （ ）情况 and `发出[[指令]]`
+//    prints 发出（ ）. That is not decoration — the bracket comes before the
+//    word in half of these items and after it in the other half, and a format
+//    that could only put it at one end could not set the paper.
+//
+// 2. The NUMBER is derived from the word's position in the bank and is never
+//    stored, exactly as an MCQ's option label is. An answer stored as "3"
+//    would point at a different word the moment the author fixed a typo in the
+//    table.
+//
+// 3. THE BANK CAN NEVER BE MISSING ONE OF ITS OWN ANSWERS. `wmBank` appends
+//    any answer the author's table does not contain — a bank without its
+//    answer renders perfectly, prints perfectly and is unanswerable, which is
+//    the same rule `cbBank` is built on. It is also reported (`wmProblems`),
+//    because on a paper it means the table was transcribed wrong.
+//
+// 4. An item with an EMPTY `[[]]` is saved with NO answer and is never marked.
+//    Never infer one — a guess marks every class that ever sits it against the
+//    wrong word. `wmUnanswered` counts them so the author is told.
+//
+// 5. A used word is NOT struck off the other items' lists, unlike the word-bank
+//    cloze. Nothing on the paper says a word may not be used twice, and
+//    removing it would both make a legitimate repeat unauthorable and hand the
+//    student an elimination the paper does not give them.
+//
+// 6. Each item registers its own ITEM in `items`, exactly as the two clozes do,
+//    so the score, the mistake log, the learning-gap list and
+//    `_checkAllPartsMarked` all count a 词语搭配 without knowing what one is.
+//    Do NOT add a second marking path.
+//
+// Run `node tools/wordmatch-tests.mjs` after touching any of it.
+// =====================================================================
+const WM_START_DEFAULT = 1;     // the paper's own first question number
+const WM_COLS = 3;              // the table is set three across, as the paper sets it
+const _wmStore = {};            // containerSel -> [{ blockId, oidxs, items, startNum, bank }]
+
+function wmIsMatch(b) { return !!b && b.type === 'wordmatch'; }
+
+// One line is one item. The `[[ ]]` is the bracket: what is before it and what
+// is after it are printed either side, so both halves of the paper's two shapes
+// — （ ）情况 and 发出（ ） — come out of one format.
+function _wmParseItem(line) {
+  const s = String(line == null ? '' : line);
+  const m = /\[\[([\s\S]*?)\]\]/.exec(s);
+  if (!m) return null;
+  return {
+    before: s.slice(0, m.index).trim(),
+    answer: m[1].trim(),
+    after: s.slice(m.index + m[0].length).trim()
+  };
+}
+// A bracket with no words either side of it is not a question — it is an
+// author mid-edit — so it is not counted, not printed and not marked.
+function wmItems(block) {
+  return String((block && block.text) || '').split(/\r?\n/)
+    .map(l => l.trim()).filter(Boolean)
+    .map(_wmParseItem)
+    .filter(it => it && (it.before || it.after));
+}
+function wmHasItems(block) { return wmIsMatch(block) && wmItems(block).length > 0; }
+
+// The table, in the paper's order. Accepts the array the AI returns or the
+// lines an author types — 一行一个词, or separated by 、 , ，  ; ；  or spaces.
+function _wmSplitBank(v) {
+  if (Array.isArray(v)) return v.map(x => String(x == null ? '' : x).trim()).filter(Boolean);
+  return String(v == null ? '' : v).split(/[\n\r,，、;；]+|\s+/).map(x => x.trim()).filter(Boolean);
+}
+// Every answer is in the bank, always. See rule 3 above: appending is what
+// makes the question answerable, and `wmProblems` is what tells the author the
+// table needs looking at.
+function wmBank(block) {
+  const out = [];
+  _wmSplitBank(block && block.bank).forEach(w => { if (out.indexOf(w) < 0) out.push(w); });
+  wmItems(block).forEach(it => { if (it.answer && out.indexOf(it.answer) < 0) out.push(it.answer); });
+  return out;
+}
+// 1-based, as the paper numbers it; 0 means "this item has no answer set".
+function wmAnswerNum(bank, answer) {
+  const i = (bank || []).indexOf(String(answer || '').trim());
+  return i < 0 ? 0 : i + 1;
+}
+function wmUnanswered(block) { return wmItems(block).filter(it => !it.answer).length; }
+function _wmStart(block) {
+  const n = Number(block && block.startNum);
+  return Number.isFinite(n) && n >= 1 && n <= 999 ? Math.floor(n) : WM_START_DEFAULT;
+}
+// What an author should look at before this goes to a class. Not a blocker:
+// the question still works, and only the author knows which of the two a given
+// case is.
+function wmProblems(block) {
+  const out = [];
+  const todo = wmUnanswered(block);
+  if (todo) out.push(todo + ' item' + (todo === 1 ? '' : 's') + ' with no answer set');
+  const given = _wmSplitBank(block && block.bank);
+  const missing = wmItems(block).map(it => it.answer).filter(a => a && given.indexOf(a) < 0);
+  if (missing.length) out.push('not in the table: ' + missing.join('、') + ' (added to the end)');
+  return out;
+}
+// Generated from the bank so the range in it can never drift from the table it
+// describes, exactly as cbIntro and cmIntro are.
+function wmIntro(block) {
+  const typed = String((block && block.intro) || '').trim();
+  if (typed) return typed;
+  const n = wmBank(block).length;
+  if (!n) return '';
+  return '从所提供的词语中，选出可以和各题搭配成合理词组的词语。然后把代表它的号码（1–' + n + '）填写在括号里。';
+}
+// The table is read ACROSS, the way this paper sets it — 1 2 3 on the first
+// row, 4 5 6 on the second. (The 🔤 cloze bank reads DOWN its columns, which is
+// how ITS paper sets that one; the two are not the same table.)
+function _wmGrid(bank) {
+  const rows = [];
+  for (let i = 0; i < bank.length; i += WM_COLS) {
+    rows.push(bank.slice(i, i + WM_COLS).map((w, k) => ({ n: i + k + 1, word: w })));
+  }
+  return rows;
+}
+
+// ---- the student's page -----------------------------------------------------
+// The bracket is a DROP-DOWN, for the reason 短文填空's blanks are: this is
+// answered on a school phone, and a number typed into a text box is a number
+// that can be typed wrong. Every option carries the paper's NUMBER as well as
+// the word, because the marking scheme answers "7（3）" and a list of bare
+// words would leave the student unable to check their work against a key.
+function _wmOptionsHtml(bank, picked) {
+  const out = ['<option value="-1">—</option>'];
+  (bank || []).forEach((w, i) => {
+    out.push('<option value="' + i + '"' + (picked === i ? ' selected' : '') + '>'
+      + '（' + (i + 1) + '）' + escapeHtml(w) + '</option>');
+  });
+  return out.join('');
+}
+function _wmBankHtml(bank) {
+  if (!bank.length) return '';
+  const cw = (100 / Math.min(WM_COLS, bank.length)).toFixed(2);
+  const rows = _wmGrid(bank).map(row =>
+    '<tr>' + row.map(c => '<td style="width:' + cw + '%"><b>' + c.n + '</b> ' + escapeHtml(c.word) + '</td>').join('') + '</tr>').join('');
+  return '<table class="wm-bank"><tbody>' + rows + '</tbody></table>';
+}
+function wmStudentHtml(block, containerSel, oidxs) {
+  const bank = wmBank(block);
+  const items = wmItems(block);
+  const start = _wmStart(block);
+  const rows = items.map((it, i) =>
+    '<div class="wm-q" data-wm-q="' + i + '">'
+    + '<b class="wm-num">' + (start + i) + '</b>'
+    + '<span class="wm-phrase">'
+    + (it.before ? '<span class="wm-side">' + escapeHtml(it.before) + '</span>' : '')
+    + '<select class="wm-pick" data-wm-blk="' + escapeHtml(block.id) + '" data-wm-i="' + i + '"'
+    + ' aria-label="第' + (start + i) + '题">' + _wmOptionsHtml(bank, -1) + '</select>'
+    + (it.after ? '<span class="wm-side">' + escapeHtml(it.after) + '</span>' : '')
+    + '</span>'
+    + '<span class="wm-ans" data-wm-ans="' + i + '"></span>'
+    + '</div>').join('');
+  const intro = wmIntro(block);
+  return '<div class="wm-wrap" data-wm-wrap="' + escapeHtml(block.id) + '" data-wm-sel="' + escapeHtml(containerSel) + '">'
+    + (intro ? '<div class="wm-intro">' + escapeHtml(intro) + '</div>' : '')
+    + _wmBankHtml(bank)
+    + '<div class="wm-items">' + rows + '</div>'
+    + '<div class="wm-actions">'
+    + '<button type="button" class="btn btn-check" data-wm-check="' + escapeHtml(containerSel) + '" data-wm-blk="' + escapeHtml(block.id) + '">✓ Check answers</button>'
+    + '<button type="button" class="btn btn-ghost" data-wm-clear="' + escapeHtml(containerSel) + '" data-wm-blk="' + escapeHtml(block.id) + '">↺ Clear all</button>'
+    + '<span class="wm-hint">在每题的下拉列表中选出可以搭配的词语。</span>'
+    + '</div>'
+    + '<div class="wm-feedback" data-wm-fb="' + escapeHtml(block.id) + '"></div>'
+    + '</div>';
+}
+function _wmWrapOf(el) { return el && el.closest ? el.closest('[data-wm-wrap]') : null; }
+// The choice is READ OFF the drop-down, never kept in a map beside it — a
+// parallel list of picks is one change away from disagreeing with the page the
+// student can see.
+function wmPicked(el) {
+  const wrap = _wmWrapOf(el); if (!wrap) return;
+  const i = el.getAttribute('data-wm-i');
+  const row = wrap.querySelector('.wm-q[data-wm-q="' + i + '"]');
+  if (row) { row.classList.remove('right', 'wrong'); row.classList.toggle('done', Number(el.value) >= 0); }
+  const ans = wrap.querySelector('.wm-ans[data-wm-ans="' + i + '"]');
+  if (ans) ans.textContent = '';
+}
+function _wmPickedIdx(wrap, i) {
+  const sel = wrap.querySelector('.wm-pick[data-wm-i="' + i + '"]');
+  const n = sel ? Number(sel.value) : -1;
+  return (isFinite(n) && n >= 0) ? n : -1;
+}
+function wmCheck(containerSel, blockId) {
+  const c = document.querySelector(containerSel); if (!c) return;
+  const store = (_wmStore[containerSel] || []).find(x => x.blockId === blockId); if (!store) return;
+  const wrap = c.querySelector('[data-wm-wrap="' + blockId + '"]'); if (!wrap) return;
+  const picked = store.items.map((_, i) => _wmPickedIdx(wrap, i));
+  if (!picked.some(p => p >= 0)) { showToast('先在下拉列表中选出词语', 'info'); return; }
+
+  let correct = 0, markable = 0;
+  const wrong = [];
+  store.items.forEach((it, i) => {
+    const row = wrap.querySelector('.wm-q[data-wm-q="' + i + '"]');
+    const want = wmAnswerNum(store.bank, it.answer) - 1;   // 0-based, -1 when unset
+    // An item the author never keyed has no right answer, so it is not marked
+    // and not counted — scoring it would mark the student against a guess.
+    if (want < 0) { if (row) row.classList.add('unkeyed'); return; }
+    markable++;
+    const ok = picked[i] === want;
+    if (ok) correct++; else wrong.push({ num: store.startNum + i, opt: want + 1, word: store.bank[want] || '' });
+    if (row) { row.classList.toggle('right', ok); row.classList.toggle('wrong', !ok); }
+    // The right answer stands beside the item it belongs to, not only in the
+    // list underneath: "you were wrong" without "this was right" teaches
+    // nothing, and a list at the foot makes the student count rows back up.
+    const ans = wrap.querySelector('.wm-ans[data-wm-ans="' + i + '"]');
+    if (ans) ans.textContent = ok ? '' : '（' + (want + 1) + '）' + (store.bank[want] || '');
+    _setPartResult(containerSel, 'open:' + store.oidxs[i], ok ? 'correct' : 'incorrect', ok ? 1 : 0,
+      store.bank[want] || '', picked[i] >= 0 ? (store.bank[picked[i]] || '') : '');
+  });
+  wrap.classList.add('wm-locked');
+  // A <select> ignores a class: without this the student can still change an
+  // answer after the question has been marked and scored.
+  wrap.querySelectorAll('.wm-pick').forEach(sel => { sel.disabled = true; });
+  const fb = wrap.querySelector('[data-wm-fb="' + blockId + '"]');
+  if (fb) {
+    fb.innerHTML = '<span style="font-weight:700;color:' + (correct === markable ? 'var(--primary)' : 'var(--accent-orange)') + ';">'
+      + correct + ' / ' + markable + ' correct</span>'
+      + (wrong.length
+        ? '<div class="wm-fb-list">' + wrong.map(w => '<span><b>' + w.num + '.</b> (' + w.opt + ') ' + escapeHtml(w.word) + '</span>').join('') + '</div>'
+        : ' 🎉');
+  }
+  _checkAllPartsMarked(containerSel);
+}
+function wmClearAll(containerSel, blockId) {
+  const c = document.querySelector(containerSel); if (!c) return;
+  const wrap = c.querySelector('[data-wm-wrap="' + blockId + '"]'); if (!wrap) return;
+  wrap.classList.remove('wm-locked');
+  wrap.querySelectorAll('.wm-pick').forEach(sel => { sel.disabled = false; sel.value = '-1'; });
+  wrap.querySelectorAll('.wm-ans').forEach(a => { a.textContent = ''; });
+  wrap.querySelectorAll('.wm-q').forEach(b => b.classList.remove('right', 'wrong', 'done', 'unkeyed'));
+  const fb = wrap.querySelector('[data-wm-fb="' + blockId + '"]');
+  if (fb) fb.innerHTML = '';
+}
+
+// ---- on PAPER ---------------------------------------------------------------
+// The table, then one item a line with an EMPTY bracket — the paper exactly,
+// and nothing anywhere marking the answer. That is the answer key's business.
+function wmPrintHtml(block) {
+  const bank = wmBank(block);
+  const items = wmItems(block);
+  if (!items.length) return '';
+  const start = _wmStart(block);
+  const cw = (100 / Math.min(WM_COLS, Math.max(1, bank.length))).toFixed(2);
+  const grid = _wmGrid(bank).map(row =>
+    '<tr>' + row.map(c => '<td style="width:' + cw + '%"><b>' + c.n + '</b> ' + escapeHtml(c.word) + '</td>').join('') + '</tr>').join('');
+  const rows = items.map((it, i) =>
+    '<div class="print-wm-q"><b>' + (start + i) + '</b>'
+    + (it.before ? '<span>' + escapeHtml(it.before) + '</span>' : '')
+    + '<span class="print-wm-bracket">（&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;）</span>'
+    + (it.after ? '<span>' + escapeHtml(it.after) + '</span>' : '')
+    + '</div>').join('');
+  const intro = wmIntro(block);
+  return (intro ? '<div class="print-wm-intro">' + escapeHtml(intro) + '</div>' : '')
+    + (bank.length ? '<table class="print-wm-bank"><tbody>' + grid + '</tbody></table>' : '')
+    + '<div class="print-wm-items">' + rows + '</div>';
+}
+// "7. （3）了解情况   8. （1）负责值日". The whole phrase, not just the word,
+// because that is what a teacher reads down the key while marking. An item
+// with no answer says so rather than printing a number to be read as one.
+function wmAnswerKeyText(block) {
+  const bank = wmBank(block);
+  const items = wmItems(block);
+  if (!items.length) return '';
+  const start = _wmStart(block);
+  return items.map((it, i) => {
+    const n = wmAnswerNum(bank, it.answer);
+    return (start + i) + '. ' + (n ? '（' + n + '）' + it.before + it.answer + it.after : '— not set');
+  }).join('   ');
+}
+
+// ---- the editor -------------------------------------------------------------
+// The preview is the READ-ONLY twin of the printed page, with each answer's
+// number filled in, so the author is looking at the question the class will
+// get rather than at [[markup]].
+function _wmEditorPreviewHtml(block) {
+  const items = wmItems(block);
+  if (!items.length) return '<span style="color:var(--text-muted);font-size:0.82rem;">Add one item a line, marking the bracket with the answer — e.g. <code>[[了解]]情况</code> or <code>发出[[指令]]</code>.</span>';
+  const bank = wmBank(block);
+  const start = _wmStart(block);
+  return _wmBankHtml(bank)
+    + '<div class="wm-items">' + items.map((it, i) => {
+      const n = wmAnswerNum(bank, it.answer);
+      return '<div class="wm-q"><b class="wm-num">' + (start + i) + '</b><span class="wm-phrase">'
+        + escapeHtml(it.before)
+        + '<span class="wm-ed-slot' + (n ? '' : ' bad') + '">（' + (n || '?') + '）</span>'
+        + escapeHtml(it.after) + '</span>'
+        + (n ? '<span class="wm-ed-word">' + escapeHtml(it.answer) + '</span>' : '<span class="wm-key-todo">answer not set</span>')
+        + '</div>';
+    }).join('') + '</div>';
+}
+// One row per item, the whole table as chips. Clicking a chip is what sets the
+// answer — the author never types the `[[ ]]` by hand once the item is there,
+// and clicking the answer again clears it, so a mis-click can get back to
+// "not set" rather than being forced to leave some answer behind.
+function _wmKeyRowsHtml(id, block) {
+  const items = wmItems(block);
+  if (!items.length) return '';
+  const bank = wmBank(block);
+  if (!bank.length) return '<span style="font-size:0.8rem;color:var(--text-muted);">Type the paper\'s word table above first.</span>';
+  const start = _wmStart(block);
+  return items.map((it, i) => '<div class="wm-key-row"><b>' + (start + i) + '</b>'
+    + '<span class="wm-key-phrase">' + escapeHtml(it.before) + '（　）' + escapeHtml(it.after) + '</span>'
+    + bank.map((w, wi) => '<button type="button" class="wm-key-opt' + (w === it.answer ? ' on' : '') + '"'
+      + ' onclick="wmSetAnswer(\'' + id + '\',' + i + ',' + wi + ')">'
+      + '<i>' + (wi + 1) + '</i>' + escapeHtml(w) + '</button>').join('')
+    + (it.answer ? '' : '<span class="wm-key-todo">answer not set</span>')
+    + '</div>').join('');
+}
+function wmSyncEditor(id) {
+  const b = blocks.find(x => x.id === id); if (!b) return;
+  const prev = document.getElementById('wmPrev_' + id); if (prev) prev.innerHTML = _wmEditorPreviewHtml(b);
+  const keys = document.getElementById('wmKeys_' + id); if (keys) keys.innerHTML = _wmKeyRowsHtml(id, b);
+  const meta = document.getElementById('wmMeta_' + id);
+  if (meta) {
+    const n = wmItems(b).length, probs = wmProblems(b);
+    meta.textContent = n
+      ? n + ' item' + (n === 1 ? '' : 's') + ' (' + _wmStart(b) + '–' + (_wmStart(b) + n - 1) + ') · '
+        + wmBank(b).length + ' words in the table'
+        + (probs.length ? ' · ' + probs.join(' · ') : ' · all answered')
+      : 'no items yet';
+  }
+}
+// Rewrites ONE item's `[[ ]]`, in place, from the bank word that was clicked.
+function wmSetAnswer(id, itemIdx, bankIdx) {
+  const b = blocks.find(x => x.id === id); if (!b) return;
+  const bank = wmBank(b);
+  const word = bank[bankIdx]; if (word === undefined) return;
+  const lines = String(b.text || '').split(/\r?\n/);
+  let k = -1;
+  for (let li = 0; li < lines.length; li++) {
+    const it = _wmParseItem(lines[li]);
+    if (!it || !(it.before || it.after)) continue;
+    k++;
+    if (k !== itemIdx) continue;
+    const clear = it.answer === word;
+    lines[li] = it.before + '[[' + (clear ? '' : word) + ']]' + it.after;
+    break;
+  }
+  b.text = lines.join('\n');
+  const ta = document.getElementById('wmText_' + id); if (ta) ta.value = b.text;
+  wmSyncEditor(id);
+}
+// Drops a ready-made item at the caret so an author never has to remember the
+// markup. The bracket goes FIRST, which is how most of these items are set.
+function wmInsertItem(id) {
+  const b = blocks.find(x => x.id === id); if (!b) return;
+  const ta = document.getElementById('wmText_' + id);
+  const cur = String(b.text || '');
+  const tpl = (cur && !/\n$/.test(cur) ? '\n' : '') + '[[]]词语';
+  if (ta && ta.selectionStart != null) {
+    const s = ta.selectionStart, e = ta.selectionEnd;
+    b.text = cur.slice(0, s) + tpl + cur.slice(e);
+    ta.value = b.text;
+    const caret = s + tpl.length;
+    try { ta.focus(); ta.setSelectionRange(caret, caret); } catch (_) {}
+  } else b.text = cur + tpl;
+  wmSyncEditor(id);
+}
+
 // ---- fill-in-the-blank on PAPER --------------------------------------------
 // The print builders used to fall through to renderImportedBlockStudent, whose
 // `fillblank` case is _fbReadonlyHtml — a REVIEW rendering that prints each
@@ -22934,8 +23443,14 @@ document.addEventListener('drop', function (e) {
 document.addEventListener('change', function (e) {
   const pick = e.target && e.target.closest ? e.target.closest('.cm-pick') : null;
   if (pick) cmPicked(pick);
+  const wmp = e.target && e.target.closest ? e.target.closest('.wm-pick') : null;
+  if (wmp) wmPicked(wmp);
 });
 document.addEventListener('click', function (e) {
+  const wmChk = e.target.closest && e.target.closest('[data-wm-check]');
+  if (wmChk) { e.preventDefault(); wmCheck(wmChk.getAttribute('data-wm-check'), wmChk.getAttribute('data-wm-blk')); return; }
+  const wmClr = e.target.closest && e.target.closest('[data-wm-clear]');
+  if (wmClr) { e.preventDefault(); wmClearAll(wmClr.getAttribute('data-wm-clear'), wmClr.getAttribute('data-wm-blk')); return; }
   const cmChk = e.target.closest && e.target.closest('[data-cm-check]');
   if (cmChk) { e.preventDefault(); cmCheck(cmChk.getAttribute('data-cm-check'), cmChk.getAttribute('data-cm-blk')); return; }
   const cmClr = e.target.closest && e.target.closest('[data-cm-clear]');
@@ -25945,6 +26460,17 @@ function buildWorksheetHtml(selected, worksheetTitle, opts) {
             }
             break;
           }
+          // Explicit, exactly as in doPrintWorksheetOpen: the student rendering
+          // shows every answer, so falling through prints a filled-in sheet.
+          case 'wordmatch': {
+            if (wmHasItems(block)) {
+              qHtml += wmPrintHtml(block);
+              _pushAnswerKeySection(qSections, '词语搭配', wmAnswerKeyText(block), bPart);
+            } else {
+              qHtml += `<div class="print-text-block">${escapeHtmlKeepLines(block.text || '')}</div>`;
+            }
+            break;
+          }
           case 'clozemcq': {
             if (cmHasBlanks(block)) {
               qHtml += cmPrintHtml(block);
@@ -26660,6 +27186,11 @@ function _wsQeBlockSummary(b) {
     case 'answerLine': return 'Answer line';
     case 'fillblank': return 'Fill in the blanks';
     case 'synthesis': return 'Rewrite the sentence' + (syCue(b) ? ' using "' + syCue(b) + '"' : '') + ' · ' + syMarks(b) + ' marks';
+    case 'wordmatch': {
+      const n = wmItems(b).length, probs = wmProblems(b);
+      return n + ' matching item' + (n === 1 ? '' : 's') + ' · ' + wmBank(b).length + ' words in the table'
+        + (probs.length ? ' · ' + probs.join(' · ') : '');
+    }
     case 'clozemcq': {
       const n = cmBlanks(b).length, todo = cmUnanswered(b);
       return n + ' numbered blank' + (n === 1 ? '' : 's') + ' · options in the passage'
@@ -31760,6 +32291,7 @@ function _docQParts(q) {
     else if (b.type === 'fillblank') { const fp = _fbParse(b.text || ''); p.text += ' ' + fp.map(x => x.type === 'blank' ? x.answer : x.text).join(''); const ans = fp.filter(x => x.type === 'blank').map(x => x.answer).join('; '); if (ans) p.answers.push({ kind: 'plain', text: ans }); }
     else if (b.type === 'synthesis') { p.text += ' ' + syGiven(b) + (syCue(b) ? ' [' + syCue(b) + ']' : ''); if (syAnswer(b)) p.answers.push({ kind: 'plain', text: syAnswer(b) }); }
     else if (b.type === 'clozemcq') { const mp = _cmParse(b.text || ''); p.text += ' ' + mp.map(x => x.type === 'blank' ? (x.options || []).join(' ') : x.text).join(' '); }
+    else if (b.type === 'wordmatch') { p.text += ' ' + wmBank(b).join(' ') + ' ' + wmItems(b).map(it => it.before + it.answer + it.after).join(' '); }
     else if (b.type === 'clozebank') { const cp = _fbParse(b.text || ''); p.text += ' ' + cp.map(x => x.type === 'blank' ? x.answer : x.text).join(''); const ans = cbAnswerKeyText(b); if (ans) p.answers.push({ kind: 'plain', text: ans }); }
     else if (b.type === 'explanation') scanInline(b.content);
   });
@@ -32293,6 +32825,10 @@ function _cqRepr(q) {
         break;
       case 'clozemcq':
         lines.push('短文填空: ' + stripHtml(b.text || '').replace(/\[\[|\]\]/g, ' '));
+        break;
+      case 'wordmatch':
+        lines.push('词语搭配. Word table: ' + wmBank(b).map((w, i) => (i + 1) + ' ' + w).join('、')
+          + '\nItems: ' + wmItems(b).map(it => it.before + '（' + (wmAnswerNum(wmBank(b), it.answer) || '?') + '）' + it.after).join('  '));
         break;
       case 'clozebank':
         lines.push('Comprehension cloze, blanks numbered from ' + _cbStart(b) + '. Word bank: '
@@ -40580,6 +41116,7 @@ function zhimeRefreshChips() {
     if (b.type === 'fillblank') { try { fbSyncChips(b.id); } catch (_) {} }
     if (b.type === 'clozebank') { try { cbSyncEditor(b.id); } catch (_) {} }
     if (b.type === 'clozemcq') { try { cmSyncEditor(b.id); } catch (_) {} }
+    if (b.type === 'wordmatch') { try { wmSyncEditor(b.id); } catch (_) {} }
   });
 }
 
@@ -40603,3 +41140,8 @@ window.cmInsertBlank = cmInsertBlank;
 window.cmSyncEditor = cmSyncEditor;
 window.cmCheck = cmCheck;
 window.cmClearAll = cmClearAll;
+window.wmSetAnswer = wmSetAnswer;
+window.wmInsertItem = wmInsertItem;
+window.wmSyncEditor = wmSyncEditor;
+window.wmCheck = wmCheck;
+window.wmClearAll = wmClearAll;
