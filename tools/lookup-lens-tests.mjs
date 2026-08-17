@@ -38,19 +38,38 @@ const slice = (from, to, what) => {
   return src.slice(a, b);
 };
 
-const lu = slice('const LU_MIN_DRAG =', '// ---- the selection ---', 'lens constants')
+const lu = slice('const AINSTEIN_DRAG_SLOP =', 'let _ainsteinDrag = null;', 'shared drag constants')
+  + slice('function _ainsteinClamp(x, y, w, h)', '// Put the bubble where it belongs', 'shared clamp')
+  + slice('const LU_MIN_DRAG =', '// ---- the selection ---', 'lens constants')
   + slice('function _luRect()', 'function _luDrawBox()', 'lens rect')
   + slice('function _luCropBox(rect, r, natW, natH)', '// The picture under the box', 'lens crop box')
   + slice('const LU_FIELDS =', 'async function luLookUp(', 'lens prompts')
   + slice('function _luVoiceList()', 'function luSpeak(', 'lens voices');
 
-const preamble = 'let currentUser = { uid: "u1" };\nlet _fakeVoices = [];\nconst window = { speechSynthesis: { getVoices: () => _fakeVoices }, SpeechSynthesisUtterance: function () {} };\n';
+const preamble = `
+let currentUser = { uid: "u1" };
+let _fakeVoices = [];
+const _els = {};                               // the fake page the placement runs on
+const document = { getElementById: (id) => _els[id] || null };
+const localStorage = { _d: {}, getItem(k) { return this._d[k] || null; }, setItem(k, v) { this._d[k] = v; }, removeItem(k) { delete this._d[k]; } };
+const window = {
+  innerWidth: 1200, innerHeight: 800,
+  speechSynthesis: { getVoices: () => _fakeVoices },
+  SpeechSynthesisUtterance: function () {},
+  addEventListener() {}
+};
+function showToast() {}
+`;
 const M = await import('data:text/javascript;base64,' + Buffer.from(
   preamble + lu +
   '\nfunction __setLu(v) { _lu = v; }'
   + '\nfunction __setVoices(v) { _fakeVoices = v; _luVoices = null; }'
+  + '\nfunction __setPage(fab, bubble, ainPos) { _els.luFab = fab; _els.ainsteinBubble = bubble; _ainsteinPos = ainPos || null; }'
+  + '\nfunction __setLuPos(p) { _luPos = p; }'
+  + '\nfunction __getLuPos() { return _luPos; }'
   + '\nexport { _luRect, _luCropBox, _luZhVoice, luCanSpeak, _luTextPrompt, _luImagePrompt, LU_FIELDS,'
-  + ' LU_MIN_DRAG, LU_MAX_CHARS, LU_CROP_MAX, LU_SPEAK_RATE, __setLu, __setVoices };'
+  + ' LU_MIN_DRAG, LU_MAX_CHARS, LU_CROP_MAX, LU_SPEAK_RATE, LU_GAP, LU_DRAG_SLOP, AINSTEIN_EDGE,'
+  + ' luPlace, _luLoadPos, _luSavePos, _ainsteinClamp, __setLu, __setVoices, __setPage, __setLuPos, __getLuPos };'
 ).toString('base64'));
 
 const cases = [];
@@ -196,6 +215,119 @@ test('the look-up is cached on the prompt', () => {
   const fn = src.slice(src.indexOf('async function luLookUp('), src.indexOf('// ---- 🔊'));
   ok(fn.indexOf('askGeminiCached(') >= 0, 'the word a whole class looks up should be fetched once');
   ok(fn.indexOf('_luBusy') >= 0, 'no in-flight guard');
+});
+
+// ── where the button parks ───────────────────────────────────────────────────
+// A fake page: a 44px lens and a 66px Ai-nstein, with `style` recording what
+// the placement wrote.
+const fakeFab = (x = 0, y = 0) => ({
+  offsetWidth: 44, offsetHeight: 44, style: {},
+  getBoundingClientRect: () => ({ left: x, top: y, width: 44, height: 44, right: x + 44, bottom: y + 44 })
+});
+const fakeBubble = (x, y) => ({
+  offsetWidth: 66, offsetHeight: 66,
+  getBoundingClientRect: () => ({ left: x, top: y, width: 66, height: 66, right: x + 66, bottom: y + 66 })
+});
+
+test('with nobody dragged, the placement writes NOTHING — the stylesheet owns it', () => {
+  // The CSS parks the lens above him from his own size tokens. An inline
+  // coordinate here could only ever disagree with it.
+  const fab = fakeFab();
+  M.__setPage(fab, fakeBubble(1100, 700), null);
+  M.__setLuPos(null);
+  M.luPlace();
+  eq([fab.style.left, fab.style.top, fab.style.right, fab.style.bottom], ['', '', '', ''], 'inline styles');
+});
+
+test('when Ai-nstein is dragged, the lens goes with him — centred, above his head', () => {
+  const fab = fakeFab();
+  M.__setPage(fab, fakeBubble(400, 300), { x: 400, y: 300 });
+  M.__setLuPos(null);
+  M.luPlace();
+  // Centred on a 66px bubble: 400 + (66 − 44)/2 = 411. Above it: 300 − 44 − gap.
+  eq(fab.style.left, '411px', 'not centred over him');
+  eq(fab.style.top, (300 - 44 - M.LU_GAP) + 'px', 'not sitting above him');
+});
+
+test('…and flips BELOW him when he is parked at the top of the screen', () => {
+  // Otherwise the lens is clamped to the edge and lands on top of his face.
+  const fab = fakeFab();
+  M.__setPage(fab, fakeBubble(400, 14), { x: 400, y: 14 });
+  M.__setLuPos(null);
+  M.luPlace();
+  eq(fab.style.top, (14 + 66 + M.LU_GAP) + 'px', 'should have flipped below him');
+});
+
+test('a lens the student dragged STAYS PUT when Ai-nstein moves', () => {
+  // This is the priority that matters: a student who put the lens somewhere
+  // put it there on purpose, and him wandering off must not drag it back.
+  const fab = fakeFab();
+  M.__setPage(fab, fakeBubble(400, 300), { x: 400, y: 300 });
+  M.__setLuPos({ x: 120, y: 90 });
+  M.luPlace();
+  eq([fab.style.left, fab.style.top], ['120px', '90px'], 'the lens was dragged back to him');
+});
+
+test('a dragged lens is kept inside the viewport, by the SAME margin as Ai-nstein', () => {
+  // Two helpers in one corner obeying two different margins is a mess nobody
+  // can put right by dragging.
+  const fab = fakeFab();
+  M.__setPage(fab, fakeBubble(400, 300), { x: 400, y: 300 });
+  M.__setLuPos({ x: -500, y: 5000 });
+  M.luPlace();
+  eq(fab.style.left, M.AINSTEIN_EDGE + 'px', 'left edge');
+  eq(fab.style.top, (800 - 44 - M.AINSTEIN_EDGE) + 'px', 'bottom edge');
+  eq(M._ainsteinClamp(-500, 5000, 44, 44).x, M.AINSTEIN_EDGE, 'the clamp is the shared one');
+});
+
+test('the spot is remembered per account and cleared when it is reset', () => {
+  M.__setPage(fakeFab(), fakeBubble(400, 300), { x: 400, y: 300 });
+  M.__setLuPos({ x: 200, y: 150 });
+  M._luSavePos();
+  M.__setLuPos(null);
+  M._luLoadPos();
+  eq(M.__getLuPos(), { x: 200, y: 150 }, 'the saved spot did not come back');
+  M.__setLuPos(null);
+  M._luSavePos();
+  M._luLoadPos();
+  eq(M.__getLuPos(), null, 'a reset must clear the saved spot, not keep it');
+});
+
+test('a tap is not a drag', () => {
+  ok(M.LU_DRAG_SLOP >= 3, 'without a slop every tap on the lens moves it a pixel and eats the click');
+});
+
+// ── the two of them share one corner ─────────────────────────────────────────
+test('Ai-nstein moving takes the lens with him, from the ONE place he moves', () => {
+  const fn = src.slice(src.indexOf('function _ainsteinApplyPos()'), src.indexOf('function _ainsteinPlacePanel()'));
+  eq((fn.match(/luPlace\(\)/g) || []).length, 2,
+    'both branches of _ainsteinApplyPos (moved, and back-to-his-corner) must re-place the lens');
+});
+
+test('his size is a TOKEN, and everything in that corner reads it', () => {
+  // The panel's offset, the quest chip's and the lens's default all hang off
+  // his height; typed as numbers they drift the moment he is resized.
+  ok(/--ainstein-size:\s*(\d+)px/.test(html), 'no --ainstein-size token');
+  const size = Number(/--ainstein-size:\s*(\d+)px/.exec(html)[1]);
+  ok(size < 88, 'he was 88px and was asked to get smaller, got ' + size);
+  for (const rule of ['#ainsteinBubble {', '#ainsteinPanel {', '#questChip {']) {
+    const at = src.indexOf(rule);
+    ok(at > 0, rule + ' not found in the injected CSS');
+    ok(src.slice(at, at + 400).indexOf('var(--ainstein-size') >= 0, rule + ' does not read the size token');
+  }
+  const at = html.indexOf('.lu-fab {');
+  const css = html.slice(at, at + 1400);
+  ok(css.indexOf('var(--ainstein-size') >= 0 && css.indexOf('var(--ainstein-edge') >= 0,
+    'the lens does not park off Ai-nstein\'s own tokens');
+});
+
+test('the lens is grabbable, and a drag does not open the picker', () => {
+  const at = html.indexOf('.lu-fab {');
+  const css = html.slice(at, at + 1400);
+  ok(/cursor:\s*grab/.test(css), 'it must read as draggable');
+  ok(/touch-action:\s*none/.test(css), 'without touch-action:none a drag scrolls the page on a phone');
+  const start = src.slice(src.indexOf('function luStart()'), src.indexOf('function luCancel()'));
+  ok(start.indexOf('_eatClick') >= 0, 'putting the lens down would open the picker');
 });
 
 // ── the markup ───────────────────────────────────────────────────────────────
