@@ -2325,7 +2325,7 @@ async function enterApp(user) {
 
 // App version shown to admins in the sidebar. BUMP THIS on every change you
 // deploy (see CLAUDE.md) so the admin can confirm the latest build is live.
-const APP_VERSION = 'v2.21.0';
+const APP_VERSION = 'v2.21.1';
 
 // =====================================================================
 // THE SUBJECT SWITCHER — one student, four subjects (v2.6.0)
@@ -15025,6 +15025,41 @@ function qPartMap(blocks) {
   });
   return map;
 }
+
+// ── THE PRINTED PART LABEL RESERVES ITS OWN WIDTH ───────────────────────────
+// A block that OPENS a part hangs its label in the margin, positioned OUT of
+// the flow — so the block itself has to RESERVE the room with padding-left.
+// That reserve was a flat 26pt, which is exactly the room "(a)" needs and
+// nothing like the room a longer label needs: a wide part marker printed
+// straight over the first words of its own question, on every surface that
+// uses the print CSS at once (both print builders and the live A4 preview).
+//
+// So the reserve is MEASURED FROM THE LABEL. `printPartBlockHtml` is the ONE
+// place a printed part label and the block that carries it are built, and it
+// writes the same number into both — the padding the text starts at and the
+// width of the label's own box — so they can never disagree. A label wider
+// than PRINT_PART_PAD_MAX would eat the column instead of the question, so it
+// stops there and wraps within its box rather than growing without limit.
+const PRINT_PART_PAD_MIN = 26;      // pt — the room "(a)" has always had
+const PRINT_PART_PAD_PER_CH = 5.9;  // pt a character of 11pt bold takes
+const PRINT_PART_PAD_GAP = 8;       // pt of clear paper between label and text
+const PRINT_PART_PAD_MAX = 96;      // pt — never give the label the column
+function printPartPadPt(lab) {
+  const n = String(lab || '').length;
+  if (!n) return 0;
+  return Math.min(PRINT_PART_PAD_MAX,
+    Math.max(PRINT_PART_PAD_MIN, Math.ceil(n * PRINT_PART_PAD_PER_CH) + PRINT_PART_PAD_GAP));
+}
+// `lab` is the label text ('' for a block that opens no part), `inner` the HTML
+// that goes inside the block. `cls` adds classes to the block itself.
+function printPartBlockHtml(lab, inner, cls) {
+  const extra = cls ? ' ' + cls : '';
+  if (!lab) return `<div class="print-text-block${extra}">${inner || ''}</div>`;
+  const pad = printPartPadPt(lab);
+  return `<div class="print-text-block print-has-part${extra}" style="padding-left:${pad}pt;">`
+    + `<span class="print-part-label" style="width:${pad}pt;">${escapeHtml(lab)}</span>`
+    + (inner || '') + `</div>`;
+}
 // A block explicitly filed under NO part — a note that belongs to the whole
 // question, not to whichever part happens to sit above it. Without this an
 // explanation covering all of (a), (b) and (c) inherits (a) and is shown and
@@ -16116,9 +16151,7 @@ function doPrintWorksheetOpen() {
           // was typed into the text — only now it is a field, not characters.
           const own = qPartNormalize(block.part);
           if (textHtml || own) {
-            qHtml += `<div class="print-text-block${own ? ' print-has-part' : ''}">`
-              + (own ? `<span class="print-part-label">${escapeHtml(qPartLabel(own))}</span>` : '')
-              + textHtml + `</div>`;
+            qHtml += printPartBlockHtml(own ? qPartLabel(own) : '', textHtml);
           }
           break;
         }
@@ -16184,7 +16217,7 @@ function doPrintWorksheetOpen() {
         case 'synthesis': {
           if (syReady(block)) {
             const ownS = qPartNormalize(block.part);
-            if (ownS && qPartLabelFirst(q.blocks, block)) qHtml += `<div class="print-text-block print-has-part"><span class="print-part-label">${escapeHtml(qPartLabel(ownS))}</span></div>`;
+            if (ownS && qPartLabelFirst(q.blocks, block)) qHtml += printPartBlockHtml(qPartLabel(ownS), '');
             qHtml += syPrintHtml(block);
             _pushBlockAnswerKey(qSections, block, bPart);
           }
@@ -16227,7 +16260,7 @@ function doPrintWorksheetOpen() {
           // open one (see QPART_OPENER_TYPES), and without this the paper shows
           // four bare options while the answer key calls them question 16.
           const ownP = qPartNormalize(block.part);
-          if (ownP && qPartLabelFirst(q.blocks, block)) qHtml += `<div class="print-text-block print-has-part"><span class="print-part-label">${escapeHtml(qPartLabel(ownP))}</span></div>`;
+          if (ownP && qPartLabelFirst(q.blocks, block)) qHtml += printPartBlockHtml(qPartLabel(ownP), '');
           qHtml += renderImportedBlockStudent(block);
           // The correct option, an answer line's answer and a 🔑 answer-key
           // block all belong on the key. Without them an MCQ-only question
@@ -27241,9 +27274,7 @@ function buildWorksheetHtml(selected, worksheetTitle, opts) {
             const textHtml = escapeHtmlKeepLines(qPartBodyHtml(block));
             const own = qPartNormalize(block.part);
             if (textHtml || own) {
-              qHtml += `<div class="print-text-block${own ? ' print-has-part' : ''}">`
-                + (own ? `<span class="print-part-label">${escapeHtml(qPartLabel(own))}</span>` : '')
-                + textHtml + `</div>`;
+              qHtml += printPartBlockHtml(own ? qPartLabel(own) : '', textHtml);
             }
             break;
           }
@@ -27288,7 +27319,7 @@ function buildWorksheetHtml(selected, worksheetTitle, opts) {
           case 'synthesis': {
             if (syReady(block)) {
               const ownS = qPartNormalize(block.part);
-              if (ownS && qPartLabelFirst(q.blocks, block)) qHtml += `<div class="print-text-block print-has-part"><span class="print-part-label">${escapeHtml(qPartLabel(ownS))}</span></div>`;
+              if (ownS && qPartLabelFirst(q.blocks, block)) qHtml += printPartBlockHtml(qPartLabel(ownS), '');
               qHtml += syPrintHtml(block);
               _pushBlockAnswerKey(qSections, block, bPart);
             }
@@ -27328,7 +27359,7 @@ function buildWorksheetHtml(selected, worksheetTitle, opts) {
             // open one (see QPART_OPENER_TYPES), and without this the paper shows
             // four bare options while the answer key calls them question 16.
             const ownP = qPartNormalize(block.part);
-            if (ownP && qPartLabelFirst(q.blocks, block)) qHtml += `<div class="print-text-block print-has-part"><span class="print-part-label">${escapeHtml(qPartLabel(ownP))}</span></div>`;
+            if (ownP && qPartLabelFirst(q.blocks, block)) qHtml += printPartBlockHtml(qPartLabel(ownP), '');
             qHtml += renderImportedBlockStudent(block);
             // Unconditional, exactly as doPrintWorksheetOpen does it: an MCQ's
             // correct option is the answer to that question, not an optional
