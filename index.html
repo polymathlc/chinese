@@ -6811,6 +6811,11 @@ body.zhime-field .zhime-pill, .zhime-pill.on { display: inline-flex; }
       <a class="nav-item" href="journey/index.html" target="_blank" rel="noopener" title="西游记：孙悟空正传 — 每闯过一关，门后先考三道华文短题：答对一题回 10 点气血，赏赐也高一重。">
         <span class="ico">🐒</span> 西游记闯关 Journey
       </a>
+      <!-- 🏆 The Journey leaderboard. A page of this app (unlike the 🐒 game
+           link above it), so it carries a data-page like every other. -->
+      <div class="nav-item" data-page="journeyboard" onclick="navigateTo('journeyboard')" title="The Journey to the West leaderboard — ranked on the questions answered right at the chamber gates, with a voucher for the top three each month.">
+        <span class="ico">🏆</span> 西游榜 Journey Board
+      </div>
       <!-- Admin-only nav items -->
       <div class="nav-section-label admin-only">Build</div>
       <div class="nav-item admin-only" data-page="create" onclick="navigateTo('create')">
@@ -8134,6 +8139,24 @@ body.zhime-field .zhime-pill, .zhime-pill.on { display: inline-flex; }
       </div>
       <div class="page-body" style="max-width:760px;">
         <div id="gapsContainer"></div>
+      </div>
+    </div>
+
+
+    <!-- ===== PAGE: 🏆 JOURNEY LEADERBOARD ===== -->
+    <div class="page" id="page-journeyboard">
+      <div class="page-header">
+        <div>
+          <div style="display:flex;align-items:center;gap:10px;">
+            <button class="mobile-toggle" onclick="toggleSidebar()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12h18M3 6h18M3 18h18"/></svg></button>
+            <h2>🏆 西游榜 Journey Board</h2>
+          </div>
+          <div class="subtitle">Questions answered right at the chamber gates of 🐒 Journey to the West</div>
+        </div>
+        <button class="btn btn-outline" onclick="renderJourneyBoard(true)" style="font-size:0.82rem;">↻ Refresh</button>
+      </div>
+      <div class="page-body" style="max-width:900px;">
+        <div id="jbContainer"></div>
       </div>
     </div>
 
@@ -10038,6 +10061,32 @@ Q22 邻居总是对父亲说：“你儿子可真‘厉害’！”是因为____
   .subject-menu { min-width: 232px; }
 }
 @media print { .subject-switch { display: none !important; } }
+
+/* 🏆 The Journey leaderboard */
+.jb-tabs { display:flex; gap:8px; margin-bottom:14px; flex-wrap:wrap; }
+.jb-tab { border:1px solid var(--border); background:var(--surface); color:var(--text);
+  border-radius:999px; padding:8px 18px; font-size:0.86rem; font-weight:600; cursor:pointer; }
+.jb-tab:hover { background:var(--surface-container-high,#f3f1ec); }
+.jb-tab.active { background:var(--primary); border-color:var(--primary); color:#fff; }
+.jb-prize { border:1px solid var(--border); border-left:4px solid #f59e0b; border-radius:10px;
+  padding:14px 18px; margin-bottom:18px; font-size:0.88rem; line-height:1.7; background:rgba(245,158,11,0.06); }
+.jb-prize-quiet { border-left-color:var(--border); background:var(--surface); }
+.jb-wrap { overflow-x:auto; border:1px solid var(--border); border-radius:12px; }
+.jb-table { width:100%; border-collapse:collapse; font-size:0.9rem; }
+.jb-table th, .jb-table td { padding:12px 14px; text-align:left; border-bottom:1px solid var(--border); }
+.jb-table th { font-size:0.76rem; text-transform:uppercase; letter-spacing:0.05em; color:var(--text-muted); font-weight:700; }
+.jb-table tr:last-child td { border-bottom:none; }
+.jb-num { text-align:right; white-space:nowrap; }
+.jb-place { width:52px; font-size:1.05rem; text-align:center; color:var(--text-muted); }
+.jb-score { font-weight:800; font-size:1rem; }
+.jb-name { font-weight:600; }
+.jb-you { font-size:0.72rem; background:var(--primary); color:#fff; border-radius:999px; padding:2px 8px; margin-left:6px; }
+.jb-win { background:rgba(245,158,11,0.08); }
+.jb-badge { display:inline-block; margin-top:4px; font-size:0.74rem; font-weight:700;
+  color:#92400e; background:rgba(245,158,11,0.2); border-radius:999px; padding:3px 10px; }
+.jb-me td { box-shadow:inset 3px 0 0 var(--primary); }
+.jb-you-line { margin-top:14px; font-size:0.86rem; color:var(--text-muted); }
+
 
 /* ---- 🔍 THE LOOK-UP LENS ---------------------------------------------------
    The button lives on the RIGHT EDGE, vertically centred, and that is not a

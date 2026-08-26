@@ -2313,9 +2313,16 @@ uses the print CSS at once: both print builders and the live A4 preview.
   named constant used at every call site rather than a string typed out in three
   places, and swapping the model means checking its scale first. The Science app
   (`polymathlc/cer`) carries the same pair — keep the two in step.
-- Run the twenty-four harnesses after touching what they cover — every failure
+- Run the twenty-six harnesses after touching what they cover — every failure
   they catch is **silent**, with nothing thrown and nothing wrong on screen:
   - `node tools/answer-key-tests.mjs`
+  - `node tools/journey-board-tests.mjs` — 🏆 the Journey leaderboard. There is
+    money on this board and every way it goes wrong is silent: apply accuracy
+    once instead of squaring it and the board is won by rattling through, badge
+    the all-time top three and the voucher is offered to the wrong people, let
+    a row clamp the wrong way and one claiming five right out of nothing
+    answered out-ranks real work, and drift the month key by an hour and a run
+    answered on the 31st lands in a month the board is not showing.
   - `node tools/journey-quiz-tests.mjs` — 🐒 the between-rounds question gate
     in `journey/`. Loosen its allowlist and a student mid-battle is handed a
     comprehension passage — the one thing that gate was asked never to do;
@@ -2574,3 +2581,80 @@ one. **Do not move the question text out of it.**
   stops using the teacher's questions for ever, and a draw that cannot serve
   past the bank's own size stops asking half way through a 100-chapter run and
   turns the gate back into a doorway.
+
+### The gate serves THE BANK, and waits for it (v2.23.0)
+
+Two things were quietly sending students the built-in practice questions
+instead of the teacher's, and both looked exactly like the feature working.
+
+- **`jqOpenGate` drew SYNCHRONOUSLY.** The first chamber is cleared long before
+  four Firebase CDN modules have imported, the sign-in has resolved, the admin
+  pointer has been read and the whole bank has been fetched — so `jqBank()` was
+  empty and every question came out of `JQ_BUILTIN`. On a school connection
+  that is several gates in a row. **`BANK.ready` is the promise the gate now
+  waits on** (`jqWaitForBank`), behind a *fetching your teacher's questions…*
+  card, bounded by `JQ_BANK_WAIT` so a gate can never fail to open. Every
+  terminal state in the module settles that promise — a branch that announces
+  and does not `done()` leaves every gate for the rest of the run waiting the
+  full timeout.
+- **The allowlist refused an `explanation` block**, and the portal's own AI
+  writes one onto very nearly every question it builds. `buildOpenBody` hides
+  an explanation and a widget until the student has answered, and
+  `renderImportedBlockStudent` returns `''` for an answer key and a page break
+  — so `IGNORED_BLOCKS` is the portal's own "not shown inside the question"
+  set, and a question carrying one is an ordinary short MCQ.
+
+Also widened, all of it still short: **one picture is carried** (an image block
+or an `<img>` pasted into the wording — several is a figure study and is
+refused), the stem cap is 320 characters and an option 90.
+
+**A refusal now returns a REASON** (`{ no: 'clozebank' }`), the load tallies
+them, and the card's fallback chip says which fallback it is — *not signed in*
+and *no short questions in the bank* are very different things to tell a
+teacher. Signed out, the card **offers to sign in** rather than quietly asking
+its own questions; refusing is remembered for the run, not asked at every one
+of a hundred gates.
+
+## 🏆 The Journey leaderboard (v2.23.0)
+
+`jb*` in `app.js` (search `THE JOURNEY LEADERBOARD`), the `.jb-*` CSS and
+`#page-journeyboard` in `index.html`, the 🏆 sidebar item, and `BANK.publishBoard`
+in `journey/index.html`. One row per student at **`zhJourneyBoard`**, written by the
+gate and read by the page. **Top 3 each month win a $10 voucher.**
+
+- **IT RANKS ON THE QUESTIONS, NEVER ON HOW FAR THE RUN GOT.** A chapter number
+  is climbed by replaying the easy chapters, and there is money on this board.
+  `bestChapter` is shown because it is what a player cares about; it decides
+  nothing, and the harness pins that.
+- **The formula is the family's own — correct × accuracy SQUARED.** Squaring is
+  what stops the board being won on volume: 900 questions at 35% must not beat
+  400 at 88%. `jbScore` is the ONE place a row becomes a number, so the
+  ranking, the row and the prize strip cannot disagree about who is winning.
+  It clamps `correct` DOWN to `answered` — clamping the other way would hand a
+  row claiming five right out of nothing answered a perfect score, and every
+  student can write their own row.
+- **ONLY QUESTIONS OUT OF THE BANK ARE PUBLISHED** (`jqPublishRound`). The
+  built-in set is two dozen questions a student meets over and over; counting
+  them would turn a board meant to measure work into one that measures how long
+  a tab was left open. A round publishes ONCE, and a question nobody reached is
+  not published as wrong.
+- **RANKING AND PAYING ARE DIFFERENT QUESTIONS.** A tiny perfect run really can
+  lead the board — that is the formula — and it is still not payable:
+  `JB_MIN_QUESTIONS` is the floor, because a voucher decided on nine questions
+  is a voucher decided on luck. An ineligible row is still SHOWN; it is a real
+  student.
+- **The voucher badge is on the MONTH board only.** On the all-time board it
+  would put "🎟 $10 voucher" against three students who have not won anything
+  this month — the wrong three people, on a page that reads perfectly. That bug
+  shipped in the first draft and the harness caught it.
+- **The month key is SINGAPORE time**, and the game carries its own copy
+  (`monthKey`) because it is a separate page and cannot import this one. The
+  harness checks the two against each other: drift and a run answered late on
+  the 31st is filed in a month the board is not showing.
+- A **retired account is off every board** (`_getRetiredUids`), a display name
+  is **escaped** (a student supplies it), and every tie breaks on something
+  printed on the row — accuracy, then questions, then chapter.
+- The board is written by the student's own device, exactly as `zhProgress` is.
+  The prize is awarded by a teacher reading the board, never paid out by the
+  rules.
+- Run **`node tools/journey-board-tests.mjs`** after touching any of it.

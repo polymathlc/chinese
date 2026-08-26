@@ -116,3 +116,17 @@ practice set, and the card always says which of the two a question came from.
 
 Answering a bank question is recorded in the portal's usage tracker under
 **Journey to the West**, exactly like any other practice mode.
+
+
+### 🏆 The leaderboard
+
+Questions answered at the gates go on the portal's **Journey Board** — the 🏆
+link in the sidebar next door. **The top three each month win a $10 voucher.**
+
+It ranks on the questions, not on how far you got: your score is the questions
+you answered **right, multiplied by your accuracy twice over**, so the board
+cannot be won by rattling through. The furthest chapter you have reached is
+shown beside your name, and decides nothing.
+
+Only questions from your teacher's bank count — the built-in practice ones
+never do.
