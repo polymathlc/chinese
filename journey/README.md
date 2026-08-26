@@ -114,6 +114,11 @@ standing in a doorway with a horde on the other side. Signed out, offline, or
 with nothing short enough in the bank, the gate falls back to a built-in
 practice set, and the card always says which of the two a question came from.
 
+Only **short, standalone** questions are ever asked — never a comprehension
+question, a cloze, a listening or an oral one. A question that refers to a
+passage you cannot see is not a question you can answer standing in a doorway.
+
+
 Answering a bank question is recorded in the portal's usage tracker under
 **Journey to the West**, exactly like any other practice mode.
 

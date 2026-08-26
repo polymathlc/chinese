@@ -58,7 +58,7 @@ const document = {
 };
 `;
 const filterBlock = cut('    const MAX_STEM', '    // ---- THE ATTEMPT LOG', 'filter');
-const raw = new Function(DOM_SHIM + filterBlock + '\nreturn { quizUsable, plain, MAX_STEM, MAX_OPTION, IGNORED_BLOCKS };')();
+const raw = new Function(DOM_SHIM + filterBlock + '\nreturn { quizUsable, plain, MAX_STEM, MAX_OPTION, IGNORED_BLOCKS, PASSAGE_TOPIC_RE, PASSAGE_STEM_RE };')();
 // A refusal comes back as { no: '<reason>' } so the bank load can report what
 // disqualified a bank rather than leaving a teacher to guess. `usable` is the
 // question or null; `why` is the reason it was refused.
@@ -257,6 +257,104 @@ test('the wording comes back as PLAIN text, markup gone', () => {
     blocks: [{ id: 't1', type: 'text', content: '<p>Choose the <strong>correct</strong> word.</p>' }, mcq()]
   }));
   ok(!/[<>]/.test(q.stem), 'markup reached the card: ' + q.stem);
+});
+
+section('\nNO COMPREHENSION QUESTIONS — the passage is never on the card');
+
+// A comprehension MCQ passes every block test: one text block, one MCQ, no
+// parts. Its passage is somewhere else, so what reaches a student is
+// "According to the passage, why did…" with nothing to answer it from. This
+// is the leak the user reported, and it is refused twice over — by what the
+// question is FILED as, and by what it SAYS.
+
+for (const topic of [
+  'Comprehension MCQ', 'Comprehension: Inference', 'Comprehension (Open-ended)',
+  'Comprehension Cloze', 'Vocabulary Cloze', 'Grammar Cloze', 'Visual Text Comprehension',
+  'Listening Comprehension', 'Oral: Reading Aloud',
+  '阅读理解（选择题） Comprehension MCQ', '阅读理解（问答题） Comprehension Open-ended',
+  '短文填空 Cloze Passage', '听力理解 Listening Comprehension', '口试：朗读 Oral: Reading Aloud'
+]) {
+  test('a question filed under "' + topic + '" is refused', () => {
+    const q = shortQ({ topic });
+    ok(!F.usable(q), 'a comprehension question reached a student mid-battle');
+    eq(F.why(q), 'comprehension-topic');
+  });
+}
+
+test('the SECOND topic field is read too', () => {
+  eq(F.why(shortQ({ topic: 'Grammar', topic2: 'Comprehension: Inference' })), 'comprehension-topic');
+});
+
+test('a TITLE off a comprehension paper is read too', () => {
+  eq(F.why(shortQ({ topic: 'Grammar', title: 'Comprehension Passage 2 — Q17' })), 'comprehension-topic');
+});
+
+test('a tag is read too', () => {
+  eq(F.why(shortQ({ topic: 'Grammar', tags: ['past-paper', '阅读理解'] })), 'comprehension-topic');
+});
+
+for (const topic of [
+  'Grammar', 'Vocabulary', 'Punctuation and Spelling', 'Synthesis and Transformation',
+  'Editing for Spelling and Grammar',
+  '汉语拼音 Hanyu Pinyin', '词语运用 Vocabulary in Use', '成语与谚语 Idioms & Proverbs',
+  '关联词 Connectives', '完成句子 Sentence Completion', '病句修改 Correcting Sentences',
+  '量词与搭配 Measure Words & Collocation', '标点符号 Punctuation'
+]) {
+  test('a question filed under "' + topic + '" is still asked', () => {
+    ok(F.usable(shortQ({ topic })), 'the gate just lost a whole topic of perfectly good questions');
+  });
+}
+
+for (const stem of [
+  'According to the passage, why was the boy late?',
+  'In the passage, what does the word "reluctant" mean?',
+  'What does the author suggest in paragraph 3?',
+  'From the extract, how did the writer feel?',
+  'Which word best describes the narrator?',
+  'Read line 4. What is the effect?',
+  '文中的“衬衫”指的是什么？',
+  '根据短文，作者为什么没有时间？',
+  '本文主要讲述了什么？',
+  '第二段中的“它”指的是谁？',
+  '作者的父亲做什么工作？'
+]) {
+  test('a stem that points at a passage is refused: "' + stem.slice(0, 34) + '…"', () => {
+    const q = shortQ({ topic: 'Grammar', blocks: [{ id: 't1', type: 'text', content: '<p>' + stem + '</p>' }, mcq()] });
+    ok(!F.usable(q), 'the passage it points at is not on the card');
+    eq(F.why(q), 'needs-a-passage');
+  });
+}
+
+for (const stem of [
+  'She ______ to school every morning.',
+  'Which word is a noun?',
+  'Choose the correct connective: He was tired, ______ he kept running.',
+  '“开心”的近义词是：',
+  '下列哪个词语的写法是正确的？',
+  '一（　）书',
+  '“衬衫”的汉语拼音是：'
+]) {
+  test('an ordinary one-line question is still asked: "' + stem.slice(0, 30) + '…"', () => {
+    ok(F.usable(shortQ({ topic: 'Grammar', blocks: [{ id: 't1', type: 'text', content: '<p>' + stem + '</p>' }, mcq()] })),
+       'the passage rule ate an ordinary question');
+  });
+}
+
+test('an OPTION may say "the author" — only the stem is checked', () => {
+  ok(F.usable(shortQ({
+    topic: 'Vocabulary',
+    blocks: [{ id: 't1', type: 'text', content: '<p>Who wrote the book?</p>' },
+             mcq({ options: [{ id: 'o1', text: 'the author' }, { id: 'o2', text: 'the printer' }], correctId: 'o1' })]
+  })), 'a perfectly ordinary answer was read as a passage reference');
+});
+
+test('NO BUILT-IN QUESTION trips either rule', () => {
+  // The built-in set is the fallback everything rests on. If the passage rules
+  // ate half of it the gate would quietly run short on the very days the bank
+  // cannot be read.
+  G.JQ_BUILTIN.forEach((row, i) => {
+    ok(!F.PASSAGE_STEM_RE.test(row[0]), 'built-in row ' + i + ' reads as a passage question: ' + row[0]);
+  });
 });
 
 section('\nTHE DRAW — which questions a round is built from');
