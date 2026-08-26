@@ -104,6 +104,20 @@ service cloud.firestore {
       allow write:  if isSelf(uid) || isAdmin();
     }
 
+    // 🏆 The Journey to the West leaderboard — one row per student, written by
+    // the question gate inside journey/ and read by the board page here. Counts
+    // only: questions answered at a gate, how many were right, and the furthest
+    // chapter reached. Never an answer, never what any one question was.
+    //
+    // A student writes their OWN row, exactly as they write their own progress
+    // row above — the board is as trusting as every other board in this family,
+    // and the prize is awarded by a teacher looking at it, not paid out by the
+    // rules. The admin can write any row so a wrong one can be corrected.
+    match /zhJourneyBoard/{uid} {
+      allow read:   if signedIn();
+      allow write:  if isSelf(uid) || isAdmin();
+    }
+
     // One row per marked question, used for the report and the activity view.
     match /zhQuestionAttempts/{docId} {
       allow read:   if signedIn();

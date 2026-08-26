@@ -114,6 +114,7 @@ const PROFILES_COL  = 'zhUserProfiles';
 const CONFIG_COL    = 'zhConfig';
 const PROGRESS_COL  = 'zhProgress';
 const ATTEMPTS_COL  = 'zhQuestionAttempts';
+const JOURNEY_BOARD_COL = 'zhJourneyBoard';   // zhJourneyBoard — one row per student, written by the gate in journey/
 const FLAGS_COL     = 'zhFlaggedQuestions';
 const COMMUNITY_COL = 'zhCommunity';
 const QUESTS_COL    = 'zhEncounterQuests';
@@ -2325,7 +2326,7 @@ async function enterApp(user) {
 
 // App version shown to admins in the sidebar. BUMP THIS on every change you
 // deploy (see CLAUDE.md) so the admin can confirm the latest build is live.
-const APP_VERSION = 'v2.22.0';
+const APP_VERSION = 'v2.23.0';
 
 // =====================================================================
 // THE SUBJECT SWITCHER — one student, four subjects (v2.6.0)
@@ -3777,6 +3778,7 @@ function navigateTo(page) {
   if (page === 'myreport') loadMyReport();
   if (page === 'flashcards') renderFlashcardsPage();
   if (page === 'gaps') renderGapsPage();
+  if (page === 'journeyboard') renderJourneyBoard();
   if (page === 'familysettings') famRenderSettings();
   if (page === 'scheduled') loadScheduledQuestions();
   if (page === 'flagged') loadFlaggedQuestions();
@@ -29483,6 +29485,206 @@ function recordCerPerformance(q, score, total, mode, answerText) {
     score100: p.score100, attempts: p.attempts, updatedAt: p.updatedAt
   }, { merge: true }).catch(e => console.warn('leaderboard save', e));
 }
+
+// =====================================================================
+// 🏆 THE JOURNEY LEADERBOARD
+//
+// One row per student, written by the gate inside journey/ — three short
+// questions at every chamber gate — and read here, because the game is a page
+// of its own and the portal is where standings are looked at and where the
+// teacher awards the prize.
+//
+// IT RANKS ON THE QUESTIONS, NEVER ON HOW FAR THE RUN GOT. A chapter number is
+// climbed by replaying the easy chapters, and this is a board with money on
+// it. `bestChapter` is shown because it is what a player cares about; it
+// decides nothing.
+//
+// THE FORMULA IS THE FAMILY'S OWN: correct answers × accuracy SQUARED. Squaring
+// is what stops the board being won on volume — 900 questions at 35% must not
+// beat 400 at 88% — and it is one line so that a student can check it.
+//
+// ONLY QUESTIONS OUT OF THIS PORTAL'S OWN BANK are ever published (see
+// jqPublishRound in journey/index.html). The gate's built-in set is two dozen
+// questions a student would meet over and over, and counting those would make
+// this a measure of how long the tab was left open.
+// =====================================================================
+const JB_SUBJECT = '华文';
+const JB_PRIZE_TOP = 3;             // how many the voucher pays
+const JB_PRIZE_TEXT = '$10 voucher';
+const JB_MIN_QUESTIONS = 10;        // below this a row ranks but cannot win
+
+let _jbRows = null;                 // the board as last read
+let _jbTab = 'month';               // month | all
+
+// Singapore time, because the prize is a month's prize at the centre. It MUST
+// agree with monthKey() in journey/index.html, or a run answered on the 1st is
+// filed in a month the board is not showing.
+function jbMonthKey(d) {
+  const now = d || new Date();
+  const sgt = new Date(now.getTime() + (8 * 60 + now.getTimezoneOffset()) * 60000);
+  return sgt.getFullYear() + '-' + String(sgt.getMonth() + 1).padStart(2, '0');
+}
+
+function jbMonthLabel(key) {
+  const [y, m] = String(key || '').split('-').map(Number);
+  if (!y || !m) return '';
+  return new Date(Date.UTC(y, m - 1, 1)).toLocaleDateString('en-GB', { month: 'long', year: 'numeric', timeZone: 'UTC' });
+}
+
+// The ONE place a row becomes a score. Everything — the ranking, the row, the
+// prize strip — reads this, so the board and the badge cannot disagree about
+// who is winning.
+function jbScore(correct, answered) {
+  const a = Math.max(0, Number(answered) || 0);
+  // A row can only ever be as right as it was asked. Clamping the OTHER way —
+  // raising `answered` to meet a `correct` that overshoots it — would hand a
+  // row claiming five right out of nothing answered a perfect score, on a
+  // board that pays a voucher and that every student can write their own row
+  // of. Whichever way a bogus row is wrong, it must not out-rank real work.
+  const c = Math.min(a, Math.max(0, Number(correct) || 0));
+  if (!a) return 0;
+  const acc = c / a;
+  return Math.round(c * acc * acc);
+}
+
+// A row's numbers for whichever board is on show. The all-time counters are
+// the ones the game has always written; a month reads its own entry, and a
+// month nobody played is a zero rather than a missing row.
+function jbStats(row, tab, monthKeyNow) {
+  if (tab === 'all') return { correct: row.correct || 0, answered: row.answered || 0 };
+  const m = (row.months || {})[monthKeyNow] || {};
+  return { correct: m.c || 0, answered: m.a || 0 };
+}
+
+function jbRank(rows, tab, monthKeyNow) {
+  return rows
+    .map(row => {
+      const s = jbStats(row, tab, monthKeyNow);
+      // Clamped for the same reason jbScore clamps: the accuracy PRINTED on
+      // the board must never read 500% because a row overshot its own count.
+      const answered = Math.max(0, Number(s.answered) || 0);
+      const correct = Math.min(answered, Math.max(0, Number(s.correct) || 0));
+      return {
+        row,
+        correct,
+        answered,
+        acc: answered ? correct / answered : 0,
+        score: jbScore(correct, answered),
+        chapter: row.bestChapter || 0
+      };
+    })
+    .filter(e => e.answered > 0)
+    // Score first, then accuracy, then the questions done, then the furthest
+    // chapter — every tie broken by something a student can see on the board,
+    // so two people on the same score are never in an order nobody can explain.
+    .sort((x, y) => y.score - x.score || y.acc - x.acc || y.correct - x.correct || y.chapter - x.chapter);
+}
+
+// A row can rank without being payable: a prize decided on three questions is
+// a prize decided on luck, so a voucher needs a real amount of work behind it.
+function jbPrizeWinners(ranked) {
+  return ranked.filter(e => e.correct >= JB_MIN_QUESTIONS).slice(0, JB_PRIZE_TOP);
+}
+
+function jbSetTab(tab) {
+  _jbTab = (tab === 'all') ? 'all' : 'month';
+  jbPaint();
+}
+
+async function renderJourneyBoard(force) {
+  const c = document.getElementById('jbContainer');
+  if (!c) return;
+  if (_jbRows && !force) { jbPaint(); return; }
+  c.innerHTML = `<div style="padding:40px;text-align:center;color:var(--text-muted);">Loading the board…</div>`;
+  try {
+    const snap = await getDocs(collection(db, JOURNEY_BOARD_COL));
+    const retired = await _getRetiredUids();
+    const rows = [];
+    snap.forEach(d => {
+      if (retired.has(d.id)) return;     // a retired account is off every board
+      const v = d.data();
+      if (v) rows.push({ ...v, uid: v.uid || d.id });
+    });
+    _jbRows = rows;
+  } catch (e) {
+    console.warn('journey board read', e);
+    c.innerHTML = `<div class="empty-state"><h3>The board could not be read</h3><p>${escapeHtml(String(e && e.message || e))}</p></div>`;
+    return;
+  }
+  jbPaint();
+}
+
+function jbPaint() {
+  const c = document.getElementById('jbContainer');
+  if (!c) return;
+  const key = jbMonthKey();
+  const ranked = jbRank(_jbRows || [], _jbTab, key);
+  // The voucher is a MONTH's prize, so only the month board may wear the
+  // badge. On the all-time board it would put "🎟 $10 voucher" against three
+  // students who have not won anything this month — the wrong three people,
+  // on a page that otherwise reads perfectly.
+  const winners = _jbTab === 'month' ? jbPrizeWinners(ranked) : [];
+  const winnerUids = new Set(winners.map(w => w.row.uid));
+  const meUid = currentUser ? currentUser.uid : '';
+
+  const tabs = `
+    <div class="jb-tabs">
+      <button class="jb-tab${_jbTab === 'month' ? ' active' : ''}" onclick="jbSetTab('month')">🏆 ${escapeHtml(jbMonthLabel(key))}</button>
+      <button class="jb-tab${_jbTab === 'all' ? ' active' : ''}" onclick="jbSetTab('all')">📜 All time</button>
+    </div>`;
+
+  const prize = _jbTab === 'month'
+    ? `<div class="jb-prize">🎟 <b>Top ${JB_PRIZE_TOP} this month win a ${JB_PRIZE_TEXT} each.</b>
+         Ranked on <b>questions answered right at the gates × accuracy², </b> so the board cannot be won by
+         rattling through — and only questions from the ${escapeHtml(JB_SUBJECT)} bank count, never the game's own
+         practice ones. At least ${JB_MIN_QUESTIONS} right to be eligible.</div>`
+    : `<div class="jb-prize jb-prize-quiet">📜 Every question ever answered at a Journey gate. The ${escapeHtml(JB_PRIZE_TEXT)} is paid on the monthly board.</div>`;
+
+  if (!ranked.length) {
+    c.innerHTML = tabs + prize + `<div class="empty-state"><h3>Nobody on the board yet</h3>
+      <p>Play <a href="journey/index.html" target="_blank" rel="noopener">Journey to the West</a> and answer the questions at a chamber gate — they go on this board.</p></div>`;
+    return;
+  }
+
+  const rowsHtml = ranked.map((e, i) => {
+    const place = i + 1;
+    const isMe = e.row.uid === meUid;
+    const wins = winnerUids.has(e.row.uid);
+    const medal = place === 1 ? '🥇' : place === 2 ? '🥈' : place === 3 ? '🥉' : place;
+    return `<tr class="${wins ? 'jb-win' : ''}${isMe ? ' jb-me' : ''}">
+      <td class="jb-place">${medal}</td>
+      <td>
+        <div class="jb-name">${escapeHtml(e.row.name || e.row.email || 'Student')}${isMe ? ' <span class="jb-you">you</span>' : ''}</div>
+        ${wins ? `<div class="jb-badge">🎟 ${escapeHtml(JB_PRIZE_TEXT)}</div>` : ''}
+      </td>
+      <td class="jb-num jb-score">${e.score}</td>
+      <td class="jb-num">${e.correct} / ${e.answered}</td>
+      <td class="jb-num">${Math.round(e.acc * 100)}%</td>
+      <td class="jb-num">${e.chapter || '—'}</td>
+    </tr>`;
+  }).join('');
+
+  const mine = ranked.findIndex(e => e.row.uid === meUid);
+  const yours = meUid
+    ? (mine >= 0
+        ? `<div class="jb-you-line">You are <b>#${mine + 1}</b> of ${ranked.length} on this board.</div>`
+        : `<div class="jb-you-line">You are not on this board yet — answer a question at a Journey gate and you will be.</div>`)
+    : '';
+
+  c.innerHTML = tabs + prize + `
+    <div class="jb-wrap">
+      <table class="jb-table">
+        <thead><tr>
+          <th>#</th><th>Student</th>
+          <th class="jb-num" title="Questions right × accuracy², so accuracy counts twice">Score</th>
+          <th class="jb-num">Right / done</th><th class="jb-num">Accuracy</th>
+          <th class="jb-num" title="The furthest chapter reached — shown, but it decides nothing">Chapter</th>
+        </tr></thead>
+        <tbody>${rowsHtml}</tbody>
+      </table>
+    </div>` + yours;
+}
+
 function _scoreColor(s) { return s >= 80 ? 'var(--primary)' : s >= 55 ? 'var(--accent-orange)' : 'var(--accent-red)'; }
 function _topicAccuracy(p) {
   return Object.entries(p.topics || {})
@@ -40180,6 +40382,8 @@ function ainsteinOnSignOut() {
   _ainsteinAskedConcepts.clear();
 }
 
+window.renderJourneyBoard = renderJourneyBoard;
+window.jbSetTab = jbSetTab;
 window.navigateTo = navigateTo;
 // Exam paper builder — the page is built from inline on* handlers.
 window.epPick = epPick;
