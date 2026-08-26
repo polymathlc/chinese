@@ -2313,9 +2313,16 @@ uses the print CSS at once: both print builders and the live A4 preview.
   named constant used at every call site rather than a string typed out in three
   places, and swapping the model means checking its scale first. The Science app
   (`polymathlc/cer`) carries the same pair — keep the two in step.
-- Run the twenty-three harnesses after touching what they cover — every failure
+- Run the twenty-four harnesses after touching what they cover — every failure
   they catch is **silent**, with nothing thrown and nothing wrong on screen:
   - `node tools/answer-key-tests.mjs`
+  - `node tools/journey-quiz-tests.mjs` — 🐒 the between-rounds question gate
+    in `journey/`. Loosen its allowlist and a student mid-battle is handed a
+    comprehension passage — the one thing that gate was asked never to do;
+    tighten it past the real bank and the gate quietly stops using the
+    teacher's questions for ever and runs on its built-in set, on a card that
+    still names its source and a teacher who never looks. An unticked MCQ
+    served here marks a whole class against a word nobody chose.
   - `node tools/check-questions-tests.mjs`
   - `node tools/part-marker-tests.mjs` — the doubled part marker. Both
     directions are silent: too timid and every AI-built sub-question prints its
@@ -2471,3 +2478,99 @@ things checked every time, because all three are silent when wrong:
 
 The **Textbooks** page is also absent: it embedded a file of Science content with
 no Chinese equivalent.
+
+## 🐒 Journey to the West — the game, and the question gate inside it (v2.22.0)
+
+`journey/` is a copy of the `polymathlc/journey` repository: a 100-chapter
+Wukong action roguelite in ONE self-contained `index.html` (48 MB, with every
+sprite and every sound base64'd into it). It is reached from the sidebar's
+🐒 link and served from `journey/index.html` — its own page, not a page of this
+app. `journey/README.md` is the game's own manual.
+
+What this repo added to that copy is **the between-rounds question gate**
+(search `THE BETWEEN-ROUNDS QUESTION GATE` in `journey/index.html` — it is in
+two pieces, the game-side half in the main script and the bank reader in a
+`<script type="module">` at the foot of the file).
+
+Clearing a chamber opens three gates, and stepping into one used to hand the
+reward over on contact. It asks **three short Chinese questions** first.
+
+- **Every right answer heals `JQ_HEAL` (10) health, at once.** It is the only
+  healing in the game a student can decide to earn.
+- **The number they get right is the upgrade tier (0–3), and it makes the
+  reward BETTER**: a divine boon arrives that many ranks higher, a peach raises
+  the rank by that many more, and the three plain gates pay
+  `JQ_SHOP_GOLD`/`JQ_HEART_HP`/`JQ_ASHES` more each. **Getting none right is
+  the game exactly as it was** — the gate never punishes, it only pays, and the
+  summary card says so in as many words.
+- **The card says what the tier is worth BEFORE it is claimed**
+  (`jqRewardBlurb`). A bonus a student cannot see is a bonus that taught them
+  nothing.
+
+### The questions are the teacher's own, and the allowlist is the feature
+
+`window.JourneyBank` reads `users/{adminUid}/questionsZh` — the same bank the
+portal serves, resolved through the same `zhConfig/admin` pointer, with the
+same App Check. The game is on the same origin as the portal, so a student
+signed in next door is already signed in here.
+
+- **`quizUsable` is an ALLOWLIST, never a list of things to skip**: a question
+  is usable only when it is short wording plus exactly ONE multiple-choice
+  block. Every longer thing this portal can hold — a comprehension passage set,
+  a cloze of any kind, an editing passage, a synthesis rewrite, an open answer,
+  a table, a picture, a question with (a)(b)(c) parts — falls out of that rule
+  without being named, so **a block type added to the portal next month is
+  excluded here by default** rather than quietly served to a student standing
+  in a doorway with a horde on the other side.
+- **An unticked MCQ is refused.** Guessing which option is right would mark a
+  whole class against a word nobody chose, on a card that reads perfectly.
+- **It READS the bank and writes nothing to it.** The only write is one
+  attempt row per bank question, under the mode **`journey-quiz`** in
+  `zhQuestionAttempts`, so the work shows in the teacher's usage tracker like any other
+  mode. That label is in `USAGE_MODES` in `app.js`: a mode written from OUTSIDE
+  `app.js` needs it more than most, because an unlabelled row reads as a mode
+  somebody forgot rather than as a game.
+- **Nothing is level-gated, deliberately.** The level of a question is read off
+  its TOPIC through `topicLevelMap`, which lives in `app.js` — and a copy of
+  that map inside a 48 MB game file is a copy that silently drifts. The gate is
+  a between-rounds warm-up, not a graded practice mode, so it draws from the
+  whole bank instead.
+- **No bank, no sign-in, no network, or a bank of nothing but passages all fall
+  through to the BUILT-IN practice set** (`JQ_BUILTIN`) rather than to a gate
+  that cannot be opened — and **the card says which of the two each question
+  came from**. A student told these are their teacher's questions when they are
+  not learns to distrust the whole gate.
+
+### The card is drawn in a SHADOW ROOT, and that is load-bearing
+
+The game runs a MutationObserver over `document.body` that pushes every text
+node through its own Chinese→English glossary while the language is English
+(`localizeTextNode`). A question put in the ordinary DOM is silently rewritten
+by that glossary — measured, a 华文 stem came back with 写**法** turned into
+"写Spell", 气血上限 into "Max Health" and 第 3 章 into "Chapter 3": four
+plausible options and a student answering something their teacher never asked.
+The observer does not walk into a shadow root, so the whole card is drawn in
+one. **Do not move the question text out of it.**
+
+### Other things that hold it together
+
+- **`jqBusy` is what keeps the game loop out.** The gate test runs every frame
+  and the card takes seconds to answer, so without it a single step into a gate
+  opens a new quiz sixty times a second.
+- **The two gates that grant on the spot must hand the pause back**
+  (`needsResume` in `jqGrantGate`). The quiz opened the pause, so the quiz has
+  to close it — the three modal rewards take it over themselves, and the other
+  two would otherwise leave the run frozen on an empty screen.
+- **The tier is taken ONCE** (`jqTakeBonusRanks`), so a peach bought in the
+  shop later in the same chamber is a purchase rather than this gate's prize
+  all over again.
+- **The sidebar link is a plain `<a class="nav-item">` with NO `data-page`.**
+  `navigateTo` knows nothing about it, an employee's default-deny sweep hides
+  it (`dataset.page` is `''`, which is on no `EMPLOYEE_PAGES` list), and the
+  bookmark stars query `.nav-item[data-page]` and skip it.
+- Run **`node tools/journey-quiz-tests.mjs`** after touching any of it. Every
+  failure is silent: loosen the allowlist and a student mid-battle is handed a
+  comprehension passage, tighten it past the real bank and the gate quietly
+  stops using the teacher's questions for ever, and a draw that cannot serve
+  past the bank's own size stops asking half way through a 100-chapter run and
+  turns the gate back into a doorway.

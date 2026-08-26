@@ -164,3 +164,30 @@ Home screen and the teacher's dashboard read it.
 
 The Textbooks page is not here either: it embedded a file of Science content
 with no Chinese equivalent.
+
+---
+
+## 🐒 Journey to the West (`journey/`)
+
+A copy of `polymathlc/journey` — a 100-chapter Wukong action roguelite in one
+self-contained page — with a **question gate between the rounds**.
+
+Clear a chamber, three gates open, and stepping into one asks **three short
+华文 questions** before it hands the reward over:
+
+- each right answer heals **10 health**, at once;
+- the number right is the **upgrade tier**, and the reward arrives that many
+  ranks better (a divine boon already advanced, a peach worth more, the plain
+  gates paying more);
+- getting none right is the game exactly as it was — the gate never punishes.
+
+The questions come live from **this portal's own question bank**, and only the
+short ones are ever asked: never a comprehension passage, a cloze or an editing
+passage, because they are answered standing in a doorway with a horde on the
+other side. Signed out or offline it falls back to a built-in practice set, and
+the card always says which of the two a question came from. Answering a bank
+question is recorded in the usage tracker under **Journey to the West**.
+
+It is reached from the 🐒 link in the sidebar, or directly at `journey/`.
+Everything about it is documented in `CLAUDE.md`; the game's own manual is
+`journey/README.md`, and `node tools/journey-quiz-tests.mjs` is its harness.

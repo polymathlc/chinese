@@ -6803,6 +6803,14 @@ body.zhime-field .zhime-pill, .zhime-pill.on { display: inline-flex; }
       <div class="nav-item" data-page="community" onclick="navigateTo('community')">
         <span class="ico">🏛️</span> Community
       </div>
+      <!-- 🐒 西游记闯关 — journey/ 里的动作肉鸽，关关都有问答门。它是另一个
+           页面，不属于本应用，所以只是一个普通链接、没有 data-page：navigateTo
+           不认得它，员工账号的默认拒绝清扫会把它藏起来（dataset.page 是 ''，
+           不在任何 EMPLOYEE_PAGES 上），书签星星只查 .nav-item[data-page]，
+           也会跳过它。 -->
+      <a class="nav-item" href="journey/index.html" target="_blank" rel="noopener" title="西游记：孙悟空正传 — 每闯过一关，门后先考三道华文短题：答对一题回 10 点气血，赏赐也高一重。">
+        <span class="ico">🐒</span> 西游记闯关 Journey
+      </a>
       <!-- Admin-only nav items -->
       <div class="nav-section-label admin-only">Build</div>
       <div class="nav-item admin-only" data-page="create" onclick="navigateTo('create')">
