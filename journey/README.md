@@ -128,10 +128,9 @@ Answering a bank question is recorded in the portal's usage tracker under
 Questions answered at the gates go on the portal's **Journey Board** — the 🏆
 link in the sidebar next door. **The top three each month win a $10 voucher.**
 
-It ranks on the questions, not on how far you got: your score is the questions
-you answered **right, multiplied by your accuracy twice over**, so the board
-cannot be won by rattling through. The furthest chapter you have reached is
-shown beside your name, and decides nothing.
+It ranks on the **number of questions you answer right** at the gates, and on
+nothing else. Your accuracy and the furthest chapter you have reached are shown
+beside your name; they break a tie and decide nothing else.
 
 Only questions from your teacher's bank count — the built-in practice ones
 never do.

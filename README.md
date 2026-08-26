@@ -189,9 +189,9 @@ the card always says which of the two a question came from. Answering a bank
 question is recorded in the usage tracker under **Journey to the West**.
 
 Questions answered at the gates go on the **🏆 Journey Board** — its own page in
-the sidebar. The top three each month win a **$10 voucher**, ranked on questions
-answered right × accuracy², so it cannot be won by rattling through; only bank
-questions count towards it.
+the sidebar. The top three each month win a **$10 voucher**, ranked on the
+number of questions answered right at the gates; only bank questions count
+towards it.
 
 It is reached from the 🐒 link in the sidebar, or directly at `journey/`.
 Everything about it is documented in `CLAUDE.md`; the game's own manual is

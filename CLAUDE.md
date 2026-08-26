@@ -2317,12 +2317,13 @@ uses the print CSS at once: both print builders and the live A4 preview.
   they catch is **silent**, with nothing thrown and nothing wrong on screen:
   - `node tools/answer-key-tests.mjs`
   - `node tools/journey-board-tests.mjs` — 🏆 the Journey leaderboard. There is
-    money on this board and every way it goes wrong is silent: apply accuracy
-    once instead of squaring it and the board is won by rattling through, badge
-    the all-time top three and the voucher is offered to the wrong people, let
-    a row clamp the wrong way and one claiming five right out of nothing
-    answered out-ranks real work, and drift the month key by an hour and a run
-    answered on the 31st lands in a month the board is not showing.
+    money on this board and every way it goes wrong is silent: rank on anything
+    but the number of questions answered right and the order stops being one a
+    student can check, badge the all-time top three and the voucher is offered
+    to the wrong people, let a row clamp the wrong way and one claiming five
+    right out of nothing answered out-ranks real work, and drift the month key
+    by an hour and a run answered on the 31st lands in a month the board is not
+    showing.
   - `node tools/journey-quiz-tests.mjs` — 🐒 the between-rounds question gate
     in `journey/`. Loosen its allowlist and a student mid-battle is handed a
     comprehension passage — the one thing that gate was asked never to do;
@@ -2650,6 +2651,34 @@ do, and it is refused twice over now.
   or the fallback would quietly run short on exactly the days the bank cannot
   be read.
 
+### The underline IS the question (v2.23.2)
+
+`stemMarkup` / `KEEP_MARKS` / `jqEscape` in `journey/index.html`, and the
+`.qz-stem u` rule beside them.
+
+A 汉语拼音 question underlines the word it is asking about — *"请选出画线词语的
+汉语拼音。<u>黄昏</u>时分，夕阳洒落海面……"* — and `plain()` stripped every tag,
+so what reached the student was that sentence with **nothing marked**: four
+spellings and no word attached to any of them. The card rendered perfectly and
+could not be answered. It is the same fault the portal's own
+`escapeHtmlKeepLines` exists to prevent on paper.
+
+- **The stem is built TWICE.** `stem` is plain text — what the length cap and
+  the passage rules read, so a tag can never count towards the cap or match a
+  rule by accident — and `stemHtml` is the same wording with its marks on.
+- **It mirrors `escapeHtmlKeepLines`**: strip everything, ESCAPE, then restore a
+  fixed handful of tags from control-character markers no author can type (one
+  already in the text is dropped first). Nothing out of the bank is ever handed
+  to `innerHTML` unescaped, and the restored tags carry no attributes. `<u>`,
+  `<b>`/`<strong>` and `<em>`/`<i>` survive; everything else does not.
+- **A mark left OPEN is dropped**, exactly as the portal drops it: an unclosed
+  underline would otherwise run to the end of the question.
+- **The stem is the ONE thing on the card rendered as markup.** The options stay
+  `textContent` — an option is a word, and the convention marks the stem.
+- Run **`node tools/journey-quiz-tests.mjs`** after touching it: too timid and
+  the 汉语拼音 questions are unanswerable again, too loose and a tag out of the
+  bank reaches the page.
+
 ## 🏆 The Journey leaderboard (v2.23.0)
 
 `jb*` in `app.js` (search `THE JOURNEY LEADERBOARD`), the `.jb-*` CSS and
@@ -2661,13 +2690,15 @@ gate and read by the page. **Top 3 each month win a $10 voucher.**
   is climbed by replaying the easy chapters, and there is money on this board.
   `bestChapter` is shown because it is what a player cares about; it decides
   nothing, and the harness pins that.
-- **The formula is the family's own — correct × accuracy SQUARED.** Squaring is
-  what stops the board being won on volume: 900 questions at 35% must not beat
-  400 at 88%. `jbScore` is the ONE place a row becomes a number, so the
-  ranking, the row and the prize strip cannot disagree about who is winning.
-  It clamps `correct` DOWN to `answered` — clamping the other way would hand a
-  row claiming five right out of nothing answered a perfect score, and every
-  student can write their own row.
+- **IT RANKS ON THE NUMBER OF QUESTIONS ANSWERED RIGHT, and on nothing else.**
+  It is the one number a student can count for themselves, which is what a
+  board with a prize on it has to be. Accuracy is printed beside every row
+  because it is worth seeing; it breaks a tie and decides nothing else.
+  `jbScore` is the ONE place a row becomes a number, so the ranking, the row
+  and the prize strip cannot disagree about who is winning. It clamps `correct`
+  DOWN to `answered` — clamping the other way would hand a row claiming five
+  right out of nothing answered a full score, and every student can write their
+  own row.
 - **ONLY QUESTIONS OUT OF THE BANK ARE PUBLISHED** (`jqPublishRound`). The
   built-in set is two dozen questions a student meets over and over; counting
   them would turn a board meant to measure work into one that measures how long
