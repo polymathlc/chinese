@@ -8,9 +8,10 @@
 // voucher — and every way it can go wrong is silent: the page paints, the
 // medals line up, the numbers look plausible, and the wrong child is paid.
 //
-//  • THE FORMULA MUST SQUARE ACCURACY. Applied once, the board is won on
-//    volume: 900 questions at 35% would beat 400 at 88%, which is the opposite
-//    of what this is for. Check that exact pair if the weighting is retuned.
+//  • THE BOARD RANKS ON THE NUMBER OF QUESTIONS ANSWERED RIGHT, and on
+//    nothing else. It is the one number a student can count for themselves.
+//    Anything else quietly ranked in — accuracy, a weighting, how far the run
+//    got — is a board whose order nobody can check.
 //  • THE MONTH KEY IS SINGAPORE TIME, and it must agree with the one the game
 //    writes (monthKey in journey/index.html). Drift by one hour and a run
 //    answered late on the 31st is filed in a month the board is not showing.
@@ -61,21 +62,26 @@ const row = (uid, c, a, chapter = 1, months = null) => ({
   months: months || { [KEY]: { c, a } }
 });
 
-section('\nTHE SCORE — questions right, with accuracy counted twice');
+section('\nTHE SCORE — the number of questions answered right, and nothing else');
 
-test('a perfect run scores its questions', () => eq(B.jbScore(40, 40), 40));
-test('half right on twice as many is a quarter of the score', () => eq(B.jbScore(40, 80), 10));
+test('the score IS the questions answered right', () => {
+  eq(B.jbScore(40, 40), 40);
+  eq(B.jbScore(40, 80), 40, 'the score was weighted by something other than the count');
+  eq(B.jbScore(7, 200), 7);
+});
+
+test('accuracy does not enter the score at all', () => {
+  // The same number right, answered over wildly different amounts, must score
+  // the same — otherwise the board is ranked on something a student cannot
+  // count for themselves.
+  eq(B.jbScore(30, 30), B.jbScore(30, 300));
+});
+
+test('doing MORE always ranks higher, however loose', () => {
+  ok(B.jbScore(315, 900) > B.jbScore(200, 200), 'more questions right must rank higher');
+});
+
 test('nothing answered is nothing scored', () => { eq(B.jbScore(0, 0), 0); eq(B.jbScore(5, 0), 0); });
-
-test('ACCURACY IS SQUARED — volume cannot beat accuracy', () => {
-  const grinder = B.jbScore(315, 900);   // 900 questions at 35%
-  const careful = B.jbScore(352, 400);   // 400 questions at 88%
-  ok(careful > grinder, 'the board is winnable by rattling through: ' + careful + ' vs ' + grinder);
-});
-
-test('more right at the SAME accuracy still scores higher', () => {
-  ok(B.jbScore(80, 100) > B.jbScore(40, 50), 'doing the work must count for something');
-});
 
 test('a score can never exceed the questions answered', () => {
   for (const [c, a] of [[10, 10], [7, 10], [1, 50], [99, 100]]) {
@@ -120,22 +126,25 @@ test('the all-time board reads the running totals, not one month', () => {
 
 section('\nTHE RANKING');
 
-test('the board is ordered by score', () => {
+test('the board is ordered by questions right', () => {
   const ranked = B.jbRank([row('low', 10, 40), row('high', 30, 30), row('mid', 20, 25)], 'month', KEY);
   eq(ranked.map(e => e.row.uid), ['high', 'mid', 'low']);
+});
+
+test('MORE RIGHT WINS, even at lower accuracy', () => {
+  const ranked = B.jbRank([row('careful', 40, 40), row('busy', 60, 200)], 'month', KEY);
+  eq(ranked[0].row.uid, 'busy', 'the board stopped ranking on the number answered right');
 });
 
 test('a student who has answered nothing is not on the board', () => {
   eq(B.jbRank([row('none', 0, 0)], 'month', KEY).length, 0, 'an empty row took a place on a board with a prize');
 });
 
-test('a tie breaks on ACCURACY, then questions, then chapter', () => {
-  // Same score, different accuracy.
+test('a tie on the count breaks on ACCURACY, then chapter', () => {
   const a = B.jbRank([row('loose', 16, 32), row('tight', 16, 20)], 'month', KEY);
-  eq(a[0].row.uid, 'tight');
-  // Same score and accuracy, different amount done.
-  const b = B.jbRank([row('few', 10, 10), row('many', 10, 10)].map((r, i) =>
-    i === 1 ? row('many', 10, 10, 9) : r), 'month', KEY);
+  eq(a[0].row.uid, 'tight', 'level on answers, the more accurate one goes first');
+  const b = B.jbRank([row('shallow', 16, 20, 2), row('deep', 16, 20, 40)], 'month', KEY);
+  eq(b[0].row.uid, 'deep', 'level on both, the further run goes first');
   eq(b.length, 2, 'a tie dropped a row');
 });
 
@@ -148,7 +157,7 @@ test('every row carries the numbers the board prints beside it', () => {
   const e = B.jbRank([row('a', 9, 12, 4)], 'month', KEY)[0];
   eq(e.correct, 9); eq(e.answered, 12); eq(e.chapter, 4);
   eq(Math.round(e.acc * 100), 75);
-  eq(e.score, B.jbScore(9, 12));
+  eq(e.score, e.correct, 'the ranking number is not the count printed on the row');
 });
 
 section('\nTHE PRIZE — who the voucher actually pays');
@@ -165,13 +174,12 @@ test('the prize is a $10 voucher for the top 3', () => {
   ok(/\$10/.test(B.JB_PRIZE_TEXT), 'the prize text no longer says $10: ' + B.JB_PRIZE_TEXT);
 });
 
-test('a lucky tiny run can rank top and still NOT win the voucher', () => {
-  // 9 for 9 scores 9; 30 out of 60 scores 8. The tiny run really does lead the
-  // board — that is the formula working — and it is still not payable, because
-  // a voucher decided on nine questions is a voucher decided on luck.
-  const ranked = B.jbRank([row('lucky', 9, 9), row('worker', 30, 60)], 'month', KEY);
-  eq(ranked[0].row.uid, 'lucky', 'a perfect tiny run does rank top — that is the formula');
-  eq(B.jbPrizeWinners(ranked).map(w => w.row.uid), ['worker'],
+test('a tiny perfect run is on the board and is NOT payable', () => {
+  // 9 right leads a board where nobody else has more, and is still not
+  // payable: a voucher decided on nine questions is decided on luck.
+  const ranked = B.jbRank([row('lucky', 9, 9), row('quiet', 8, 8)], 'month', KEY);
+  eq(ranked[0].row.uid, 'lucky');
+  eq(B.jbPrizeWinners(ranked).map(w => w.row.uid), [],
      'ranking and PAYING are different questions, and only one of them has money on it');
 });
 
@@ -228,7 +236,8 @@ test('the prize line says WHO wins and WHAT, in words a student can check', () =
   const html = paint(BOARD, 'month', 'u3');
   ok(/\$10/.test(html), 'the board never names the prize');
   ok(/Top 3/i.test(html), 'the board never says how many win it');
-  ok(/accuracy/i.test(html), 'a ranking nobody can check is a ranking nobody trusts');
+  ok(/number of questions answered right/i.test(html),
+     'the board never says what it ranks on — a ranking nobody can check is one nobody trusts');
 });
 
 test('a voucher badge goes on the top three and on nobody else', () => {

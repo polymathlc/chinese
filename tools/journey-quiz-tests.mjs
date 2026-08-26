@@ -48,8 +48,13 @@ const document = {
   createElement: () => ({
     _t: '',
     set innerHTML(v) {
+      // textContent, which is what plain() really reads, DROPS a tag rather
+      // than turning it into a space: two paragraphs run together, and
+      // 选出 <u>黄昏</u> 时分 is one unbroken Chinese phrase. A shim that
+      // spaced them would put a space inside a word and quietly disagree
+      // with the browser this is standing in for.
       this._t = String(v)
-        .replace(/<[^>]*>/g, ' ')
+        .replace(/<[^>]*>/g, '')
         .replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&')
         .replace(/&lt;/g, '<').replace(/&gt;/g, '>');
     },
@@ -58,12 +63,13 @@ const document = {
 };
 `;
 const filterBlock = cut('    const MAX_STEM', '    // ---- THE ATTEMPT LOG', 'filter');
-const raw = new Function(DOM_SHIM + filterBlock + '\nreturn { quizUsable, plain, MAX_STEM, MAX_OPTION, IGNORED_BLOCKS, PASSAGE_TOPIC_RE, PASSAGE_STEM_RE };')();
+const raw = new Function(DOM_SHIM + filterBlock + '\nreturn { quizUsable, plain, stemMarkup, escapeHtml, MAX_STEM, MAX_OPTION, IGNORED_BLOCKS, PASSAGE_TOPIC_RE, PASSAGE_STEM_RE };')();
 // A refusal comes back as { no: '<reason>' } so the bank load can report what
 // disqualified a bank rather than leaving a teacher to guess. `usable` is the
 // question or null; `why` is the reason it was refused.
 const F = {
   ...raw,
+  markup: q => { const v = raw.quizUsable(q); return (v && v.stemHtml) || ''; },
   usable: q => { const v = raw.quizUsable(q); return (v && v.stem !== undefined) ? v : null; },
   why:    q => { const v = raw.quizUsable(q); return (v && v.no) || ''; }
 };
@@ -355,6 +361,67 @@ test('NO BUILT-IN QUESTION trips either rule', () => {
   G.JQ_BUILTIN.forEach((row, i) => {
     ok(!F.PASSAGE_STEM_RE.test(row[0]), 'built-in row ' + i + ' reads as a passage question: ' + row[0]);
   });
+});
+
+section('\nTHE UNDERLINE IS THE QUESTION');
+
+// A 汉语拼音 question underlines the word it asks about, and that underline IS
+// the question: "请选出画线词语的汉语拼音。黄昏时分，夕阳洒落海面……" with
+// nothing marked is four spellings and no word attached to any of them. The
+// card renders perfectly and cannot be answered — which is what was shipping.
+const marked = html => shortQ({
+  topic: 'Grammar',
+  blocks: [{ id: 't1', type: 'text', content: html },
+           mcq({ options: [{ id: 'o1', text: 'huáng hūn' }, { id: 'o2', text: 'huán hūn' }], correctId: 'o1' })]
+});
+
+test('an underlined word SURVIVES into the card', () => {
+  const html = F.markup(marked('<p>请选出画线词语的汉语拼音。<u>黄昏</u>时分，夕阳洒落海面。</p>'));
+  ok(/<u>黄昏<\/u>/.test(html), 'the underline was stripped: ' + html);
+});
+
+test('the PLAIN stem still has no markup in it', () => {
+  // The length cap and the passage rules read the plain text, so a tag left in
+  // it would count towards the cap and could match a rule by accident.
+  const q = F.usable(marked('<p>请选出画线词语的汉语拼音。<u>黄昏</u>时分。</p>'));
+  ok(!/[<>]/.test(q.stem), 'markup reached the plain stem: ' + q.stem);
+  eq(q.stem, '请选出画线词语的汉语拼音。黄昏时分。');
+});
+
+test('bold and italic survive too — an author marks the word either way', () => {
+  ok(/<b>黄昏<\/b>/.test(F.markup(marked('<p>选出<b>黄昏</b>的拼音。</p>'))));
+  ok(/<b>黄昏<\/b>/.test(F.markup(marked('<p>选出<strong>黄昏</strong>的拼音。</p>'))), 'strong is b');
+  ok(/<em>黄昏<\/em>/.test(F.markup(marked('<p>选出<em>黄昏</em>的拼音。</p>'))));
+});
+
+test('EVERYTHING ELSE IS ESCAPED — the card hands this to innerHTML', () => {
+  const html = F.markup(marked('<p>Pick <u>this</u> <img src=x onerror=alert(1)> <script>alert(2)</script></p>'));
+  ok(/<u>this<\/u>/.test(html), 'the mark should still survive');
+  ok(!/<img/.test(html) && !/<script/.test(html), 'a tag out of the bank reached the page: ' + html);
+});
+
+test('a mark left OPEN is dropped rather than run to the end of the question', () => {
+  const html = F.markup(marked('<p>选出<u>黄昏的拼音。</p>'));
+  ok(!/<u>/.test(html), 'an unclosed underline ran through the rest of the question: ' + html);
+  ok(/黄昏的拼音/.test(html), 'and the wording itself must survive');
+});
+
+test('a marker character an author somehow typed is not a mark', () => {
+  // stemMarkup marks the tags with control characters, so one already in the
+  // text has to be dropped or an author could forge an underline.
+  const OPEN = String.fromCharCode(1), CLOSE = String.fromCharCode(2);
+  const html = F.markup(marked('<p>' + OPEN + '选出黄昏' + CLOSE + '的拼音。</p>'));
+  ok(!/<u>/.test(html), 'raw control characters were read as an underline: ' + html);
+});
+
+test('a question with no marks comes back as escaped plain text', () => {
+  eq(F.markup(marked('<p>Which word is a noun?</p>')), 'Which word is a noun?');
+  eq(F.markup(marked('<p>5 &lt; 6 &amp; 7 &gt; 6</p>')), F.escapeHtml('5 < 6 & 7 > 6'));
+});
+
+test('the marks do not defeat the passage rules', () => {
+  // stemMarkup must not be a way round the comprehension filter.
+  ok(!F.usable(marked('<p>According to the <u>passage</u>, why?</p>')), 'a marked-up comprehension question got through');
 });
 
 section('\nTHE DRAW — which questions a round is built from');

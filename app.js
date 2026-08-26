@@ -2326,7 +2326,7 @@ async function enterApp(user) {
 
 // App version shown to admins in the sidebar. BUMP THIS on every change you
 // deploy (see CLAUDE.md) so the admin can confirm the latest build is live.
-const APP_VERSION = 'v2.23.1';
+const APP_VERSION = 'v2.23.2';
 
 // =====================================================================
 // THE SUBJECT SWITCHER — one student, four subjects (v2.6.0)
@@ -29499,9 +29499,10 @@ function recordCerPerformance(q, score, total, mode, answerText) {
 // it. `bestChapter` is shown because it is what a player cares about; it
 // decides nothing.
 //
-// THE FORMULA IS THE FAMILY'S OWN: correct answers × accuracy SQUARED. Squaring
-// is what stops the board being won on volume — 900 questions at 35% must not
-// beat 400 at 88% — and it is one line so that a student can check it.
+// IT RANKS ON THE NUMBER OF QUESTIONS ANSWERED RIGHT, and on nothing else. It
+// is the one number a student can count for themselves, which is what a board
+// with a prize on it needs to be. Accuracy is printed beside every row because
+// it is worth seeing; it breaks a tie and it decides nothing else.
 //
 // ONLY QUESTIONS OUT OF THIS PORTAL'S OWN BANK are ever published (see
 // jqPublishRound in journey/index.html). The gate's built-in set is two dozen
@@ -29538,13 +29539,9 @@ function jbScore(correct, answered) {
   const a = Math.max(0, Number(answered) || 0);
   // A row can only ever be as right as it was asked. Clamping the OTHER way —
   // raising `answered` to meet a `correct` that overshoots it — would hand a
-  // row claiming five right out of nothing answered a perfect score, on a
-  // board that pays a voucher and that every student can write their own row
-  // of. Whichever way a bogus row is wrong, it must not out-rank real work.
-  const c = Math.min(a, Math.max(0, Number(correct) || 0));
-  if (!a) return 0;
-  const acc = c / a;
-  return Math.round(c * acc * acc);
+  // row claiming five right out of nothing answered a full score, on a board
+  // that pays a voucher and that every student can write their own row of.
+  return Math.min(a, Math.max(0, Number(correct) || 0));
 }
 
 // A row's numbers for whichever board is on show. The all-time counters are
@@ -29574,10 +29571,10 @@ function jbRank(rows, tab, monthKeyNow) {
       };
     })
     .filter(e => e.answered > 0)
-    // Score first, then accuracy, then the questions done, then the furthest
-    // chapter — every tie broken by something a student can see on the board,
-    // so two people on the same score are never in an order nobody can explain.
-    .sort((x, y) => y.score - x.score || y.acc - x.acc || y.correct - x.correct || y.chapter - x.chapter);
+    // Questions right first, then accuracy, then the furthest chapter — every
+    // tie broken by something a student can see printed on the board, so two
+    // people level on answers are never in an order nobody can explain.
+    .sort((x, y) => y.score - x.score || y.acc - x.acc || y.chapter - x.chapter);
 }
 
 // A row can rank without being payable: a prize decided on three questions is
@@ -29635,9 +29632,9 @@ function jbPaint() {
 
   const prize = _jbTab === 'month'
     ? `<div class="jb-prize">🎟 <b>Top ${JB_PRIZE_TOP} this month win a ${JB_PRIZE_TEXT} each.</b>
-         Ranked on <b>questions answered right at the gates × accuracy², </b> so the board cannot be won by
-         rattling through — and only questions from the ${escapeHtml(JB_SUBJECT)} bank count, never the game's own
-         practice ones. At least ${JB_MIN_QUESTIONS} right to be eligible.</div>`
+         Ranked on the <b>number of questions answered right</b> at the chamber gates — and only questions from
+         the ${escapeHtml(JB_SUBJECT)} bank count, never the game's own practice ones.
+         At least ${JB_MIN_QUESTIONS} right to be eligible.</div>`
     : `<div class="jb-prize jb-prize-quiet">📜 Every question ever answered at a Journey gate. The ${escapeHtml(JB_PRIZE_TEXT)} is paid on the monthly board.</div>`;
 
   if (!ranked.length) {
@@ -29657,8 +29654,8 @@ function jbPaint() {
         <div class="jb-name">${escapeHtml(e.row.name || e.row.email || 'Student')}${isMe ? ' <span class="jb-you">you</span>' : ''}</div>
         ${wins ? `<div class="jb-badge">🎟 ${escapeHtml(JB_PRIZE_TEXT)}</div>` : ''}
       </td>
-      <td class="jb-num jb-score">${e.score}</td>
-      <td class="jb-num">${e.correct} / ${e.answered}</td>
+      <td class="jb-num jb-score">${e.correct}</td>
+      <td class="jb-num">${e.answered}</td>
       <td class="jb-num">${Math.round(e.acc * 100)}%</td>
       <td class="jb-num">${e.chapter || '—'}</td>
     </tr>`;
@@ -29676,8 +29673,8 @@ function jbPaint() {
       <table class="jb-table">
         <thead><tr>
           <th>#</th><th>Student</th>
-          <th class="jb-num" title="Questions right × accuracy², so accuracy counts twice">Score</th>
-          <th class="jb-num">Right / done</th><th class="jb-num">Accuracy</th>
+          <th class="jb-num" title="Questions answered right at the gates — this is the ranking">Right</th>
+          <th class="jb-num">Answered</th><th class="jb-num">Accuracy</th>
           <th class="jb-num" title="The furthest chapter reached — shown, but it decides nothing">Chapter</th>
         </tr></thead>
         <tbody>${rowsHtml}</tbody>
