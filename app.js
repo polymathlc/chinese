@@ -2325,7 +2325,7 @@ async function enterApp(user) {
 
 // App version shown to admins in the sidebar. BUMP THIS on every change you
 // deploy (see CLAUDE.md) so the admin can confirm the latest build is live.
-const APP_VERSION = 'v2.21.1';
+const APP_VERSION = 'v2.22.0';
 
 // =====================================================================
 // THE SUBJECT SWITCHER — one student, four subjects (v2.6.0)
@@ -32192,6 +32192,12 @@ const USAGE_MODES = {
   // The learning-gap retries. A generated question is NOT in the bank, so its
   // row can never resolve a title — which is exactly why it needs a mode label:
   // without one a teacher reading "Question a7f3…" has no idea what it was.
+  // 🐒 The between-rounds question gate in journey/ — three short questions
+  // asked at every chamber gate before the reward is handed over. It is a
+  // GAME, and it is the only mode written from outside app.js, so it needs a
+  // label here more than most: without one a teacher reads a row of raw
+  // "journey-quiz" and cannot tell it from a mode nobody labelled by mistake.
+  'journey-quiz':        { icon: '🐒', label: 'Journey to the West', group: 'game'  },
   'gap-generated':       { icon: '🩹', label: 'Gap retry (AI)',    group: 'other'    },
   'retry-generated':     { icon: '🔁', label: 'Retry (AI)',        group: 'other'    },
   'preview':             { icon: '👁️', label: 'Preview',           group: 'other'    }
