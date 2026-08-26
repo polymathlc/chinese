@@ -2615,6 +2615,41 @@ teacher. Signed out, the card **offers to sign in** rather than quietly asking
 its own questions; refusing is remembered for the run, not asked at every one
 of a hundred gates.
 
+### …and no comprehension questions get through it (v2.23.1)
+
+A **comprehension MCQ passed every block test above**: one text block with the
+sub-question's wording, one MCQ, no parts. Its PASSAGE is somewhere else — a
+sibling question, or the paper it was read off — so what reached a student
+standing in a doorway was *"According to the passage, why did the author's
+father have no time for him?"* with no passage on the card. Four plausible
+options and nothing to answer them from. That is the worst thing this gate can
+do, and it is refused twice over now.
+
+- **`PASSAGE_TOPIC_RE` catches what a question is FILED as** — Comprehension
+  MCQ, 阅读理解（选择题）, Comprehension Cloze, 短文填空, Listening, 口试. It reads
+  BOTH topic fields, the tags and the TITLE: a question filed under Grammar and
+  titled "Comprehension Passage 2 — Q17" is a comprehension question. Cloze is
+  in the pattern for the same reason comprehension is — a cloze IS a passage;
+  listening and oral are, because there is no audio at a gate and nobody to
+  read aloud to.
+- **It is a PATTERN, not a copy of the portal's topic list.** `topicLevelMap`
+  lives in `app.js`, and a copy of it inside a 48 MB game file is a copy that
+  silently drifts — the same reason the gate does not level-gate.
+- **`PASSAGE_STEM_RE` catches what the topic cannot**: a comprehension
+  sub-question filed under Grammar, or under a custom topic this file has never
+  heard of. A question that POINTS AT text it cannot show is unanswerable
+  whatever it is filed as, and that — not the filing — is the real fault.
+- **It errs towards refusing, on purpose.** A false refusal costs one question
+  out of a bank of hundreds; a false accept costs a student a question they
+  cannot answer, mid-battle, with a reward riding on it. The harness pins both
+  directions: every ordinary topic and every ordinary one-line stem must still
+  be asked, or the gate has quietly lost most of the bank again.
+- **Only the STEM is checked, never an option.** "the author" is a perfectly
+  ordinary answer to a vocabulary question.
+- **No built-in question may trip either rule** — the harness checks that too,
+  or the fallback would quietly run short on exactly the days the bank cannot
+  be read.
+
 ## 🏆 The Journey leaderboard (v2.23.0)
 
 `jb*` in `app.js` (search `THE JOURNEY LEADERBOARD`), the `.jb-*` CSS and

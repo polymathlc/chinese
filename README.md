@@ -182,8 +182,8 @@ Clear a chamber, three gates open, and stepping into one asks **three short
 - getting none right is the game exactly as it was — the gate never punishes.
 
 The questions come live from **this portal's own question bank**, and only the
-short ones are ever asked: never a comprehension passage, a cloze or an editing
-passage, because they are answered standing in a doorway with a horde on the
+short, standalone ones are ever asked: never a comprehension question, a cloze,
+an editing passage, a listening or an oral one, because they are answered standing in a doorway with a horde on the
 other side. Signed out or offline it falls back to a built-in practice set, and
 the card always says which of the two a question came from. Answering a bank
 question is recorded in the usage tracker under **Journey to the West**.
