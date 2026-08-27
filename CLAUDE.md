@@ -2226,7 +2226,66 @@ uses the print CSS at once: both print builders and the live A4 preview.
   marker painted over whatever came next and contributed nothing to the
   planner's chunk height.
 
+## 🔲 A printed blank must not measure its own answer (v2.24.0)
+
+`_fbMergeBlankRuns` / `_fbSegments` / `_fbSlotChars` (in `app.js`, search
+`A RUN OF ADJACENT BLANKS IS ONE BLANK`), and the widths in `_fbPrintHtml`,
+`_fbPreviewHtml` and `buildOpenBody`'s `fillblank` case. **All three portals
+carry the same block byte-for-byte — ship a change to all of them together.**
+
+A worksheet asked *Name the two gases* and printed **one** rule for gas R and
+**two** rules side by side for gas S. Nothing was wrong on the page; the answer
+was simply on it. Two rules say *the answer is two words*, and next to a
+one-rule blank answered "oxygen" every child in the room can read off "carbon
+dioxide" without writing a word. The paper the question came from prints one
+blank of one length for each.
+
+Two things leaked, and both are silent — the sheet prints, the question is
+answerable, and the class has been handed the answer.
+
+- **THE COUNT.** An author blanks one word at a time (`fbToggleToken` works on
+  one token), so a two-word answer is two clicks and `[[carbon]] [[dioxide]]` in
+  the text. **`_fbMergeBlankRuns` folds a run of blanks separated by nothing but
+  whitespace into ONE blank** whose answer is those words joined — one rule on
+  paper, one box on screen, one row on the key, one answer to mark.
+  - **ONLY WHITESPACE MAY JOIN THEM.** `[[carbon]], [[dioxide]]` is punctuated
+    into two real answers and stays two: the comma is the author saying so.
+    Merging those would take an answer off the paper *and* off the key with
+    nothing anywhere to say it had gone.
+  - **Directly adjacent blanks join with NO space** — `[[car]][[bon]]` is
+    "carbon", because the sentence never had a space there either.
+- **THE WIDTH.** A rule sized from its own answer MEASURES that answer.
+  `_fbSlotChars` takes the LONGEST answer in the block and **every** blank in it
+  is given that width, so the long answer keeps its room to write in and no two
+  rules can be compared. It is the rule the open cloze's `_coSlotWidth` has
+  always followed. The floor and the cap stay: under the floor there is nowhere
+  to write, over the cap a rule runs off the sheet.
+
+**`_fbSegments` is what every fill-in-the-blank surface reads; `_fbParse` stays
+the raw parser and MUST NOT merge.** The two language portals share `_fbParse`
+with the word-bank cloze, the open cloze and the editing passage, where two
+adjacent blanks are two separate answers — and an editing item is
+`[[wrong>>right]]`, so merging a pair of them would graft one item's correction
+onto the next one's misspelling. Every fillblank consumer goes through
+`_fbSegments`: the print builders, the student render, the answer key, the
+editor preview, the read-only render, the bank summary line. A consumer left on
+`_fbParse` is one surface still printing two rules while the others print one —
+and the key then numbers answers the page does not have.
+
+- Run **`node tools/fill-blank-tests.mjs`** after touching any of it.
+
 ## House rules
+- After touching **🔲 the printed blank** (`_fbMergeBlankRuns`, `_fbSegments`,
+  `_fbSlotChars`, `_fbPrintHtml`, `_fbAnswerKeyText`, `_fbPreviewHtml`,
+  `_fbReadonlyHtml`, or `buildOpenBody`'s `fillblank` case), run
+  `node tools/fill-blank-tests.mjs`. Every failure is silent and the sheet
+  still prints: stop merging a run of blanks and two rules in a row tell the
+  class the answer is two words, start merging across a comma and a whole
+  answer disappears off the paper and off the key at once, and let a rule size
+  itself from its own answer again and "oxygen" beside "carbon dioxide" is
+  legible before either is written. `_fbParse` merging is the worst of them —
+  in the language portals it welds one editing item's correction onto the next
+  one's misspelling, on a passage that still reads perfectly.
 - After touching **the printed part label** (`PRINT_PART_PAD_*`,
   `printPartPadPt`, `printPartBlockHtml`, or the
   `.print-text-block.print-has-part` rules), print a question with parts and
