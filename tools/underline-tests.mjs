@@ -37,6 +37,9 @@ const cut = (from, to, what) => {
 const section = [
   cut('function _separateOptionLines(text)', '\n// 画线词语', 'option lines'),
   cut('function _aiUnderline(text)', '\n// The "tags" instruction', 'underline'),
+  // _keepParagraphGaps is what keeps the author's blank lines; cut in rather
+  // than re-written, so this harness cannot drift from the real one.
+  cut('function _keepParagraphGaps(lines) {', '\nfunction escapeHtmlKeepLines', 'para gaps'),
   cut('function escapeHtmlKeepLines(content)', '\n// A repeated message stacks', 'escape keeping lines'),
   cut('function _partsPromptRules()', '\n// The rectangle-selection', 'parts rules'),
   `
