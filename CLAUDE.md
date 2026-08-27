@@ -2226,11 +2226,11 @@ uses the print CSS at once: both print builders and the live A4 preview.
   marker painted over whatever came next and contributed nothing to the
   planner's chunk height.
 
-## 🔲 A printed blank must not measure its own answer (v2.24.0)
+## 🔲 A printed blank must not measure its own answer (v2.24.1)
 
-`_fbMergeBlankRuns` / `_fbSegments` / `_fbSlotChars` (in `app.js`, search
-`A RUN OF ADJACENT BLANKS IS ONE BLANK`), and the widths in `_fbPrintHtml`,
-`_fbPreviewHtml` and `buildOpenBody`'s `fillblank` case. **All three portals
+`_fbMergeBlankRuns` / `_fbSegments` / `FB_PRINT_SLOT_PT` / `FB_SLOT_CH` (in
+`app.js`, search `A RUN OF ADJACENT BLANKS IS ONE BLANK`), and the widths in
+`_fbPrintHtml`, `_fbPreviewHtml` and `buildOpenBody`'s `fillblank` case. **All three portals
 carry the same block byte-for-byte — ship a change to all of them together.**
 
 A worksheet asked *Name the two gases* and printed **one** rule for gas R and
@@ -2254,12 +2254,17 @@ answerable, and the class has been handed the answer.
     nothing anywhere to say it had gone.
   - **Directly adjacent blanks join with NO space** — `[[car]][[bon]]` is
     "carbon", because the sentence never had a space there either.
-- **THE WIDTH.** A rule sized from its own answer MEASURES that answer.
-  `_fbSlotChars` takes the LONGEST answer in the block and **every** blank in it
-  is given that width, so the long answer keeps its room to write in and no two
-  rules can be compared. It is the rule the open cloze's `_coSlotWidth` has
-  always followed. The floor and the cap stay: under the floor there is nowhere
-  to write, over the cap a rule runs off the sheet.
+- **THE WIDTH.** The length of a rule is a clue on its own, so **no rule is
+  measured from anything**. `FB_PRINT_SLOT_PT` (180pt, ~63mm — several
+  handwritten words) is one standard rule on paper and `FB_SLOT_CH` (22) one
+  standard box on screen, and every blank in the app gets them: the answer is
+  never read.
+  - **Sizing from the LONGEST answer in the block was the first attempt and
+    still leaks** — it just leaks per question instead of per blank. A question
+    whose answers are all short prints short rules, and the sheet becomes a page
+    of hints in the margins.
+  - **There is no formula left to get wrong**, which is the point: a class that
+    finds the rules too long or too short is one number to change.
 
 **`_fbSegments` is what every fill-in-the-blank surface reads; `_fbParse` stays
 the raw parser and MUST NOT merge.** The two language portals share `_fbParse`
@@ -2276,15 +2281,15 @@ and the key then numbers answers the page does not have.
 
 ## House rules
 - After touching **🔲 the printed blank** (`_fbMergeBlankRuns`, `_fbSegments`,
-  `_fbSlotChars`, `_fbPrintHtml`, `_fbAnswerKeyText`, `_fbPreviewHtml`,
-  `_fbReadonlyHtml`, or `buildOpenBody`'s `fillblank` case), run
-  `node tools/fill-blank-tests.mjs`. Every failure is silent and the sheet
+  `FB_PRINT_SLOT_PT`, `FB_SLOT_CH`, `_fbPrintHtml`, `_fbAnswerKeyText`,
+  `_fbPreviewHtml`, `_fbReadonlyHtml`, or `buildOpenBody`'s `fillblank` case),
+  run `node tools/fill-blank-tests.mjs`. Every failure is silent and the sheet
   still prints: stop merging a run of blanks and two rules in a row tell the
   class the answer is two words, start merging across a comma and a whole
   answer disappears off the paper and off the key at once, and let a rule size
-  itself from its own answer again and "oxygen" beside "carbon dioxide" is
-  legible before either is written. `_fbParse` merging is the worst of them —
-  in the language portals it welds one editing item's correction onto the next
+  itself from an answer again — its own, or the longest in its block — and
+  "oxygen" beside "carbon dioxide" is legible before either is written.
+  `_fbParse` merging is the worst of them — in the language portals it welds one editing item's correction onto the next
   one's misspelling, on a passage that still reads perfectly.
 - After touching **the printed part label** (`PRINT_PART_PAD_*`,
   `printPartPadPt`, `printPartBlockHtml`, or the
