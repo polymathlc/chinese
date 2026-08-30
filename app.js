@@ -2416,7 +2416,7 @@ async function enterApp(user) {
 
 // App version shown to admins in the sidebar. BUMP THIS on every change you
 // deploy (see CLAUDE.md) so the admin can confirm the latest build is live.
-const APP_VERSION = 'v2.30.0';
+const APP_VERSION = 'v2.31.0';
 
 // =====================================================================
 // THE SUBJECT SWITCHER — one student, four subjects (v2.6.0)
@@ -10993,6 +10993,7 @@ function _aiBuildQuestionPrompt(isPdf, imageCount, levelHint) {
     `Each entry is: {"title":"short title","topic":"<closest topic>","category":"<closest category>","tags":["..."],"questionType":"mcq, open or passage","blocks":[ ...ordered blocks... ]}\n` +
     `A source holding ONE question returns an array of ONE entry. Give EVERY entry its own title, topic, category and tags — never leave them off the later entries.\n` +
     `- THE PAPER'S QUESTION NUMBER IS ONLY THE SIGNAL that they are separate questions. Do NOT keep it anywhere: no "part" field, and never write "2"、"2." 、"2、" or "（2）" into the text of any block. A bank question stands on its own, and one that opens at question 61 reads as though sixty are missing.\n` +
+    `- A FIGURE BELONGS TO EVERY QUESTION THAT NEEDS IT. A diagram, table, graph or chart is printed on the PAGE, not on a question, so one figure sitting above several questions belongs to each of them: give EVERY entry that refers to it its own "image" block with the SAME box_2d. Never leave it out of the second question because the first one already has it — a question whose figure is missing cannot be answered at all.\n` +
     `- Give each entry the blocks that match what THAT question actually is, decided per question and not once for the page: a sentence-rewrite (改写句子) becomes a "synthesis" block, a multiple-choice one an "mcq" block, a 短文填空 passage a "clozemcq" block, a 词语搭配 word-matching section a "wordmatch" block, an open question a text block plus an answer block. Two questions on the same page can be different types.\n` +
     `Each item in "blocks" is ONE of these objects:\n` +
     (multi
@@ -12418,6 +12419,28 @@ async function processRapidJob(jobId, file, batchLevel, opts) {
     }
     const many = payloads.length > 1;
 
+    // THE WHOLE PAGE, PREPARED ONCE. Every question whose own rectangles came
+    // back unusable falls back to this, and on a page of five that must not be
+    // five clean-ups and five uploads of the same sheet. It is cleaned only for
+    // a SINGLE-question source, where the picture IS the answer; on a page of
+    // several the author is going to ✂️ crop it anyway, so the page goes up as
+    // it is rather than spending an image-model call on something nobody keeps.
+    let _pageBackup;
+    const wholePage = async () => {
+      if (_pageBackup !== undefined) return _pageBackup;
+      const original = 'data:' + file.type + ';base64,' + b64;
+      let dataUrl = original;
+      if (!many && imageAiReady()) {
+        _setRapidJobState(jobId, { sub: 'Enhancing the whole image (black & white)…' });
+        renderVettingList();
+        try { dataUrl = await generateEnhancedImageDataUrl(_BW_ENHANCE_PROMPT, [{ mimeType: file.type, data: b64 }]); }
+        catch (imgErr) { console.warn('rapid B&W enhance failed; attaching the original screenshot', imgErr); dataUrl = original; }
+      }
+      try { _pageBackup = { url: await uploadImageDataUrl(dataUrl), dataUrl }; }
+      catch (e) { console.warn('whole-page backup upload failed', e); _pageBackup = null; }
+      return _pageBackup;
+    };
+
     const added = [];
     for (let pi = 0; pi < payloads.length; pi++) {
       const payload = payloads[pi];
@@ -12454,26 +12477,27 @@ async function processRapidJob(jobId, file, batchLevel, opts) {
           try {
             filled = await _fillBlocksFromAiBoxes(imgBlocks, boxes, file.type, b64, m => { _setRapidJobState(jobId, { sub: m }); renderVettingList(); });
           } catch (e) { console.warn('rapid AI rectangle flow failed', e); }
-          if (!filled && !many) {
-            // BACKUP — whole screenshot, enhanced to black & white.
-            const imgBlock = imgBlocks[0];
-            _setRapidJobState(jobId, { sub: 'Enhancing the whole image (black & white)…' });
+          if (!filled) {
+            // BACKUP — the WHOLE PAGE, prepared once above. An EMPTY picture
+            // block is not an outcome: the question reaches Vetting wearing
+            // "Diagram missing" and the only way back is to go and find the
+            // paper again, while a whole page is one ✂️ crop away from being
+            // right. Every image block on the question gets it — a question
+            // asking about two figures has two slots and neither may be blank.
+            _setRapidJobState(jobId, { sub: (many ? `Question ${pi + 1} of ${payloads.length} — ` : '') + 'no rectangle — attaching the whole page to crop by hand…' });
             renderVettingList();
-            const original = 'data:' + file.type + ';base64,' + b64;
-            try {
-              const dataUrl = imageAiReady()
-                ? await generateEnhancedImageDataUrl(_BW_ENHANCE_PROMPT, [{ mimeType: file.type, data: b64 }])
-                : original;
-              imgBlock.url = await uploadImageDataUrl(dataUrl);
-              // Seed in-session image state so Crop / Touch up / Enhance work when this
-              // question is opened in the editor (mirrors Build-from-screenshot).
-              _imgEnhanceState[imgBlock.id] = { originalDataUrl: dataUrl, originalUrl: imgBlock.url, currentDataUrl: dataUrl };
-            } catch (imgErr) {
-              console.warn('rapid B&W enhance failed; attaching original screenshot', imgErr);
-              try {
-                imgBlock.url = await uploadImageDataUrl(original);
-                _imgEnhanceState[imgBlock.id] = { originalDataUrl: original, originalUrl: imgBlock.url, currentDataUrl: original };
-              } catch (e2) { /* leave url empty; paste manually later */ }
+            const page = await wholePage();
+            if (page && page.url) {
+              imgBlocks.forEach(b => {
+                b.url = page.url;
+                // Seed in-session image state so Crop / Touch up / Enhance work when this
+                // question is opened in the editor (mirrors Build-from-screenshot).
+                _imgEnhanceState[b.id] = { originalDataUrl: page.dataUrl, originalUrl: page.url, currentDataUrl: page.dataUrl };
+              });
+              // A whole page in a picture slot looks exactly like a figure
+              // somebody has already cropped, which on a vetting card reads as
+              // finished work. It has to say so, or it is approved uncropped.
+              q.diagramWhole = true;
             }
           }
         }
@@ -14640,6 +14664,7 @@ function renderVettingList() {
               <span class="qb-tag topic">${escapeHtml(q.topic)}</span>
               ${dup ? `<span class="qb-tag" style="background:#fdf4e3;color:#7a5410;border:1px solid #e0b768;" title="Looks ${dup.pct}% similar to “${escapeHtml(dup.title)}” already in the bank">🟡 Possible duplicate</span>` : ''}
               ${scanned ? SCANNED_CARD_BADGE : ''}
+              ${q.diagramWhole ? '<span class="qb-tag" style="background:#fdf4e3;color:#b45309;" title="No rectangle came back for this question\'s figure, so the WHOLE page is in the picture slot. Open it and use ✂️ Crop.">🖼 Whole page — crop it</span>' : ''}
               ${isNew ? '<span class="qb-tag" style="background:var(--accent-orange-light);color:var(--accent-orange);" title="Just added by Rapid add — review and approve">⚡ Just added</span>' : ''}
               ${q.topicConfidence === 'low' ? '<span class="qb-tag" style="background:#fee2e2;color:#dc2626;" title="AI was unsure of this topic — please check it">⚠ check topic</span>' : q.topicConfidence === 'medium' ? '<span class="qb-tag" style="background:#fdf4e3;color:#b45309;" title="AI was fairly sure of this topic — worth a glance">~ topic?</span>' : ''}
               <span class="vetting-badge ${statusClass}">${statusClass.charAt(0).toUpperCase() + statusClass.slice(1)}</span>
