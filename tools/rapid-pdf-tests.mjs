@@ -44,6 +44,9 @@ let _rapidSeq = 0;
 const RAPID_MAX_BYTES = 18 * 1024 * 1024;
 const PDF_PAGE_MAX_SIDE = 2000;
 const LOG = { toasts: [], status: [], read: [] };
+// The app's own failure path logs; the harness drives it on purpose, so the
+// stack traces are noise that hides the one line that matters.
+const console = { error() {}, warn() {}, log() {} };
 let LEVEL = '';
 function rapidLevel() { return LEVEL; }
 function showToast(m, k) { LOG.toasts.push({ m, k }); }
@@ -168,7 +171,7 @@ test('the paste route reads FILES, not just image mime types', () => {
   // `type.startsWith("image/")` alone makes "paste a pile of PDFs" a paste that
   // silently does nothing at all.
   const body = cut('function rapidPaste(e)', '\nfunction rapidDrop', 'rapidPaste');
-  ok(/kind !== 'file'/.test(body) || /kind === 'file'/.test(body), 'rapidPaste does not look at the clipboard item kind');
+  ok(/kind !== ['"]file['"]/.test(body) || /kind === ['"]file['"]/.test(body), 'rapidPaste does not look at the clipboard item kind');
   ok(/application\/pdf/.test(body), 'rapidPaste does not accept a pasted PDF');
 });
 
