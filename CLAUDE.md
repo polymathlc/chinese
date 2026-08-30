@@ -883,6 +883,69 @@ and more accurate than correcting forty questions in vetting afterwards.
   a level and never confirming it is how a whole pile ends up at the wrong one.
 - Run **`node tools/subject-level-tests.mjs`** after touching any of it.
 
+### 📄 A whole PDF — every page read as its own screenshot (v2.30.0)
+
+`RAPID_PDF_MAX_PAGES` / `RAPID_PDF_PAR` / `rapidAddFiles` / `_rapidQueuePdf` /
+`_rapidPdfPump` / `_rapidExpandPdf` / `_rapidPageFile` / `_pdfRenderPage`
+(search `A PDF IS EXPLODED INTO PAGES`), plus `startRapidJob`'s turn-away and
+`processRapidJob`'s `blankOk`. **`polymathlc/cer`, `polymathlc/math` and the other language portal carry the same block —
+ship a change to all four together.**
+
+Paste, drop or pick a pile of PDFs on the ⚡ Rapid add pad and every question in
+every one of them lands in Vetting. Each PDF is rendered to page images by
+pdf.js and **each page is queued as an ordinary rapid job** — which is exactly
+what a pasted screenshot is — so the reader, the `box_2d` crop, the pixel
+passes, the batch level, the duplicate warning, the vetting card and the red
+failure card all follow for free.
+
+- **A PDF IS NEVER SENT TO THE MODEL WHOLE**, and both halves of that failure
+  are silent. There is no single page to measure a rectangle on, so **every
+  figure in the paper is quietly lost**; and a whole paper asked for in one
+  reply runs out of room, which does not error — it TRUNCATES, and
+  `_repairAIJson` hands back a perfectly valid-looking reply with the last
+  questions simply not in it. The turn-away lives **inside `startRapidJob`**,
+  not only in the door, so a caller added later cannot bring that read back.
+- **`rapidAddFiles` is the ONE DOOR** every route hands its files to — paste,
+  drop, the picker and the camera. A route with a pipeline of its own is a
+  route that drifts, and the drift shows up as "PDFs work when I drop them and
+  not when I paste them".
+- **A PDF copied in Explorer or Finder arrives on the clipboard as a FILE**, so
+  `rapidPaste` reads `kind === 'file'` rather than an image mime type. Matching
+  on `image/` alone makes "paste a pile of PDFs" a paste that silently does
+  nothing at all.
+- **THE BATCH LEVEL IS CAPTURED WHEN THE FILE IS QUEUED** and carried to every
+  page of it. Rendering a forty-page paper takes real time and the pad stays
+  open the whole while, so a level read inside the render loop files the back
+  half of a P3 paper at P4 the moment the author moves the picker on — and both
+  halves look perfectly right on their cards.
+- **ONE PDF IS RENDERED AT A TIME** (`_rapidPdfQueue` / `_rapidPdfPump`): ten
+  papers at once is a canvas per page of all of them, held in memory, on a
+  school Chromebook. **At most `RAPID_PDF_PAR` pages are in flight**, because a
+  page is an AI call and forty at once is a rate limit rather than a fast
+  import — the render loop waits on them, which is also what keeps the
+  questions arriving in the paper's own order.
+- **A PAGE WITH NO QUESTIONS ON IT IS NOT A FAILURE** (`blankOk`). Cover sheets,
+  instruction pages and blank backs are most of what the front of a paper
+  holds, and a red card for each of them is a wall of red that makes the one
+  real red card get clicked past. An empty page is counted and named in the
+  paper's summary instead.
+- **A page that DID fail names its paper and its page** (`job.source`).
+  "Couldn't read this screenshot" on a forty-page paper leaves the author with
+  nothing to go back to.
+- **`RAPID_PDF_MAX_PAGES` is a guard against a 400-page book**, not a judgement
+  about papers — and the pages it skips are named in a toast rather than
+  dropped in silence.
+- **`_pdfRenderPage` is the ONE renderer**, shared with the bulk import's
+  `_pdfToPageImages`, so the two cannot drift into producing a different
+  picture from the same PDF — and a crop measured on one is measured on the
+  picture the other sent. It paints the canvas white first: a PDF page is
+  transparent where nothing is drawn and a JPEG has no alpha, so the paper
+  would otherwise come out black.
+- **Per-page toasts are suppressed** — forty pages is forty toasts — and the
+  paper's own summary lands when its last page is in. The questions are visible
+  as vetting cards either way.
+- Run **`node tools/rapid-pdf-tests.mjs`** after touching any of it.
+
 ## 阅读理解问答 — a passage answered IN WRITING (v2.2.0)
 
 The B组 of the paper: one 短文, then Q34–Q40 answered in sentences, each with a
@@ -2518,6 +2581,19 @@ THE PICTURE ALREADY ON THE QUESTION** rather than invented from nothing.
 
 
 ## House rules
+- After touching **📄 whole-PDF rapid add** (`RAPID_PDF_MAX_PAGES`,
+  `RAPID_PDF_PAR`, `rapidAddFiles`, `_rapidQueuePdf`, `_rapidPdfPump`,
+  `_rapidExpandPdf`, `_rapidPageFile`, `_pdfRenderPage`, `startRapidJob`'s PDF
+  turn-away, or `processRapidJob`'s `blankOk`), run
+  `node tools/rapid-pdf-tests.mjs`. Every failure is silent and questions still
+  land in vetting: send a PDF whole again and the paper comes back with every
+  figure missing and its last questions quietly truncated away; read the batch
+  level inside the render loop and the back half of a P3 paper is filed at P4
+  the moment the author moves the picker on; treat a blank page as a failure
+  and every cover sheet in the paper leaves a red card, which is what makes the
+  one real red card get clicked past; and let every page fire at once and a
+  forty-page paper is forty simultaneous AI calls, whose rate-limit failures
+  read as "that PDF could not be read".
 - After touching **🪄 the command box in the question creator** (`QCMD_MAX_CHARS`,
   `QCMD_NO_CHANGE_RE`, `qcmdNeedsRedraw`, `qcmdChangesFor`, `QCMD_DIAGRAM_RULES`,
   `qcmdDiagramPrompt`, `qcmdDiagramPromptRules`, `qcmdSummary`,
@@ -2676,7 +2752,7 @@ THE PICTURE ALREADY ON THE QUESTION** rather than invented from nothing.
   named constant used at every call site rather than a string typed out in three
   places, and swapping the model means checking its scale first. The Science app
   (`polymathlc/cer`) carries the same pair — keep the two in step.
-- Run the twenty-six harnesses after touching what they cover — every failure
+- Run the twenty-seven harnesses after touching what they cover — every failure
   they catch is **silent**, with nothing thrown and nothing wrong on screen:
   - `node tools/answer-key-tests.mjs`
   - `node tools/journey-board-tests.mjs` — 🏆 the Journey leaderboard. There is
@@ -2788,6 +2864,12 @@ THE PICTURE ALREADY ON THE QUESTION** rather than invented from nothing.
     quantity cuts the passage in half; a full-width `（1）` read as a question
     turns every option list into four questions; a bank that does not contain
     one of its own answers renders and prints perfectly and is unanswerable.
+  - `node tools/rapid-pdf-tests.mjs` — ⚡ Rapid add taking PDFs. Every failure
+    is silent and questions still land: a PDF sent whole comes back with every
+    figure missing and its last questions truncated away, a batch level read
+    inside the render loop files the back half of a paper at the wrong year,
+    and a blank cover page treated as a failure puts a red card on every sheet
+    at the front of the paper.
   - `node tools/rapid-split-tests.mjs` — how many questions a page holds, and
     the full-width numbering strip that guards it. Split a 短文填空 and its
     blanks lose the passage they are about; fail to split a 语文应用 page of
