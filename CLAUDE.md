@@ -944,6 +944,26 @@ failure card all follow for free.
 - **Per-page toasts are suppressed** — forty pages is forty toasts — and the
   paper's own summary lands when its last page is in. The questions are visible
   as vetting cards either way.
+- **EVERY QUESTION ENDS UP WITH A PICTURE, and the page is prepared ONCE**
+  (v2.31.0). A rendered page carries several questions, and a figure printed above
+  two of them belongs to both — so the prompt says in as many words that an
+  entry needing a shared figure repeats the SAME `box_2d` rather than leaving
+  it to the first one. When a question's rectangles all come back unusable it
+  falls back to the WHOLE PAGE, which is one ✂️ crop away from being right; an
+  EMPTY picture block is not an outcome — the question reaches Vetting wearing
+  *Diagram missing* and the only way back is the paper itself.
+  - The first cut of this held the backup off a multi-question page, reasoning
+    that five identical whole-sheet pictures were worse than none. **They are
+    not**, and that is what the reported bug was: a shared pie chart above
+    Q7(a) and Q7(b) left both with nothing.
+  - The page is cleaned and uploaded **on the first question that needs it**
+    and the URL handed to the rest (`wholePage`, memoised on `_pageBackup`).
+    Five clean-ups of one sheet is five image-model calls for one picture, and
+    five uploads is five copies of it in Storage. On a MULTI-question page it
+    is not cleaned at all — the author is going to crop it anyway.
+  - **`q.diagramWhole` marks it and the vetting card SAYS so.** A whole page in
+    a picture slot looks exactly like a figure somebody has already cropped,
+    which reads as finished work and is approved into the bank uncropped.
 - Run **`node tools/rapid-pdf-tests.mjs`** after touching any of it.
 
 ## 阅读理解问答 — a passage answered IN WRITING (v2.2.0)
@@ -2591,9 +2611,12 @@ THE PICTURE ALREADY ON THE QUESTION** rather than invented from nothing.
   level inside the render loop and the back half of a P3 paper is filed at P4
   the moment the author moves the picker on; treat a blank page as a failure
   and every cover sheet in the paper leaves a red card, which is what makes the
-  one real red card get clicked past; and let every page fire at once and a
+  one real red card get clicked past; let every page fire at once and a
   forty-page paper is forty simultaneous AI calls, whose rate-limit failures
-  read as "that PDF could not be read".
+  read as "that PDF could not be read"; and hold the whole-page backup off a
+  multi-question page and every question whose rectangle came back unusable
+  lands with an EMPTY picture slot — which is exactly the "Diagram missing"
+  this feature was reported for.
 - After touching **🪄 the command box in the question creator** (`QCMD_MAX_CHARS`,
   `QCMD_NO_CHANGE_RE`, `qcmdNeedsRedraw`, `qcmdChangesFor`, `QCMD_DIAGRAM_RULES`,
   `qcmdDiagramPrompt`, `qcmdDiagramPromptRules`, `qcmdSummary`,
