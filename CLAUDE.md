@@ -2769,8 +2769,9 @@ THE PICTURE ALREADY ON THE QUESTION** rather than invented from nothing.
 - **The Gemini model is `AI_MODEL` and its thinking floor is `AI_THINK_MIN`, and
   the two move TOGETHER** (v1.2.0). Every model has its own thinking scale, and a
   level it does not know is a **400 INVALID_ARGUMENT on every AI call in the
-  app** — not a degraded answer, no answer at all. `gemini-3.7-flash` takes
-  `low` / `medium` / `high` and **dropped the `"minimal"` 3.6 accepted**, exactly
+  app** — not a degraded answer, no answer at all. `gemini-3.8-flash` takes
+  `low` / `medium` / `high` and, like 3.7 before it, **rejects the `"minimal"`
+  3.6 accepted**, exactly
   as 3.x had already dropped 2.x's numeric `thinkingBudget`. So the floor is a
   named constant used at every call site rather than a string typed out in three
   places, and swapping the model means checking its scale first. The Science app
