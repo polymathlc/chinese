@@ -133,10 +133,11 @@ const WORKSESSIONS_COL = 'zhWorkSessions';
 //         Until a real key is pasted, App Check stays off and AI still
 //         works while App Check enforcement is disabled.
 const RECAPTCHA_SITE_KEY = "6Le98gwtAAAAAAzkjJTZXFM5D8tpjx_P4rtRuhuH";
-const AI_MODEL = "gemini-3.7-flash"; // higher quality (~4x the cost of 2.5 Flash, still <1c/question)
+const AI_MODEL = "gemini-3.8-flash"; // best Flash-tier reasoning; same speed/price band as 3.7 Flash
 // The FLOOR of the thinking scale, and the only one this app asks for by
-// default. Gemini 3.7 Flash dropped the "minimal" level 3.6 accepted — sending
-// it now comes back 400 INVALID_ARGUMENT, so every call in the app would fail.
+// default. Gemini 3.8 Flash keeps 3.7's scale: it still rejects the "minimal"
+// level 3.6 accepted — sending it comes back 400 INVALID_ARGUMENT, so every
+// call in the app would fail.
 // The scale is low / medium / high (medium is the model's own default); "low"
 // is the nearest thing to the old "minimal" and keeps the token budget going
 // to the answer rather than to reasoning. Change the model, change this.
@@ -851,7 +852,7 @@ function _zhPrompt(prompt) { return ZH_PROMPT_RULES + String(prompt == null ? ''
 // AI_THINK_MIN keeps Gemini "thinking" to a minimum so the whole token budget
 // goes to the actual answer (faster + cheaper for our short tasks). Gemini 3.x
 // rejects the older numeric thinkingBudget with 400 INVALID_ARGUMENT, and 3.7
-// rejects the "minimal" level too — see AI_THINK_MIN.
+// and 3.8 reject the "minimal" level too — see AI_THINK_MIN.
 async function askGemini(prompt, opts = {}) {
   return _askGeminiRaw(_zhPrompt(prompt), opts);
 }
@@ -2416,7 +2417,7 @@ async function enterApp(user) {
 
 // App version shown to admins in the sidebar. BUMP THIS on every change you
 // deploy (see CLAUDE.md) so the admin can confirm the latest build is live.
-const APP_VERSION = 'v2.31.0';
+const APP_VERSION = 'v2.32.0';
 
 // =====================================================================
 // THE SUBJECT SWITCHER — one student, four subjects (v2.6.0)
