@@ -183,6 +183,32 @@ test('an UNTICKED mcq is refused — the gate never guesses which is right', () 
   eq(F.why(q), 'unticked');
 });
 
+// ⏳ HELD BACK BY A ⚡ RAPID ADD BATCH DATE. The portal keeps such a question
+// in the bank and serves it to nobody until that morning. A doorway is a
+// student surface like any other, and it is the one place a leak would be
+// invisible: the card paints, the student answers, and the teacher who
+// scheduled next term's paper never finds out it came out in September.
+test('a question scheduled for a future date is refused', () => {
+  const soon = new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10);
+  eq(F.why(shortQ({ releaseOn: soon })), 'scheduled');
+});
+
+test('a release date that has PASSED is not a schedule', () => {
+  ok(F.usable(shortQ({ releaseOn: '2001-01-01' })), 'a released question must still be asked');
+});
+
+// The portal's own qReleaseOn fails OPEN for the same reason: a question
+// withheld for ever by a value nobody can read is worse than one asked early.
+test('a value that is not a day key is not a schedule', () => {
+  ok(F.usable(shortQ({ releaseOn: 'next term' })), 'a word must not withhold a question for ever');
+  ok(F.usable(shortQ({ releaseOn: 20301201 })), 'a number is not a day key');
+  ok(F.usable(shortQ({ releaseOn: new Date(Date.now() + 9e8).toISOString() })), 'an ISO timestamp is not a day key');
+});
+
+test('an ordinary question carries no date and is unaffected', () => {
+  ok(F.usable(shortQ()), 'the overwhelming majority of the bank');
+});
+
 test('a correctId naming no option is refused', () => {
   ok(!F.usable(shortQ({ blocks: [{ id: 't1', type: 'text', content: '<p>Q</p>' }, mcq({ correctId: 'nope' })] })));
 });

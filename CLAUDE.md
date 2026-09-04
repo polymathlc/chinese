@@ -2600,7 +2600,129 @@ THE PICTURE ALREADY ON THE QUESTION** rather than invented from nothing.
 - Run **`node tools/ai-command-tests.mjs`** after touching any of it.
 
 
+## ⏳ A batch with a RELEASE DATE on it (v2.33.0)
+
+`RELEASE_TZ` / `RELEASE_DAY_RE` / `releaseDayKey` / `releaseToday` /
+`releaseDayFromNow` / `qReleaseOn` / `qScheduled` / **`qReleased`** /
+`qReleaseLabel` / `qReleaseWhen` / `qReleaseChipHtml` (in `app.js`, beside
+`qInSyllabus` — search `Scheduled release`), the pad's own half —
+`RAPID_RELEASE_KEY` (`zhRapidRelease`) / `rapidRelease` / `setRapidRelease` /
+`_rapidReleaseSetup` / `_rapidReleasePaint` / **`_rapidApplyRelease`** — the
+🗓 page's `_bankScheduledRows` / `renderBankScheduled` / `_bankSetRelease` /
+`bankReleaseNow` / `bankReleaseBatchNow` / `bankMoveRelease`, `#rapidReleaseWrap`
+and `#bankScheduledContainer` in `index.html`, and **`scheduledAhead` in
+`journey/index.html`**. **All the portals carry the same block — ship a change
+to all of them together.**
+
+⚡ Rapid add gained a **📅 Release date for this batch** picker beside its
+📚 level picker. Everything queued after it lands in Vetting exactly as it
+always did, is approved into the bank exactly as it always was — and **keeps
+the date**: no practice mode, quest, topical session, flashcard pool, Snap &
+Mark match, Ai-nstein suggestion or 🐒 Journey doorway serves it to a student
+until that morning.
+
+- **IT IS NOT THE 🗓 SCHEDULED QUESTIONS PAGE, AND THE TWO MUST NOT BE MERGED.**
+  That page keeps a whole COPY of the question OUT of the bank, in its own
+  `SCHEDULED_COL` collection, and writes it in on release day — so until then
+  the bank does not know the question exists and nothing can be tagged, checked,
+  printed or put on a worksheet in advance. This is the opposite, and it is what
+  was asked for: the question is in the bank from the moment it is approved,
+  wearing a date. Both are listed on the 🗓 page, in their own sections.
+- **SO THERE IS NOTHING TO RUN, AND NOTHING TO DEPLOY.** A release is not an
+  event: no cron, no Cloud Function, no second write, **no rules change** — the
+  field rides the documents this app already writes. The question becomes
+  servable because `qScheduled` starts coming out the other way, which is also
+  why a date can be moved or cleared at any time and takes effect on the very
+  next render.
+- **`qReleased(q)` IS THE ONE PREDICATE**, and every student-facing pool asks it
+  beside `qInSyllabus` / `qWithinStudentLevel`. **The CENSUS in
+  `tools/scheduled-release-tests.mjs` fails on the NEXT pool somebody adds
+  without it** — a pool left behind serves a question weeks early, on a screen
+  that looks perfectly right, with nothing anywhere to say it happened.
+- **IT READS NO ROLE, deliberately.** `qWithinStudentLevel` has to ask who is
+  looking; this does not, which removes the whole class of "an admin previewing
+  as a student saw it anyway" holes. What separates the two audiences is
+  **WHICH SURFACES ASK**: the serving pools do, and the management surfaces —
+  the bank list, the bank grid, the vetting list, the worksheet builder, the
+  print picker — deliberately do not, and **badge it** instead. That is exactly
+  the rule an out-of-syllabus question already follows, and it is what lets a
+  teacher build next term's worksheet today. The one thing that follows: a
+  teacher who deliberately puts a scheduled question on a sheet and hands it out
+  **has handed it out** — an explicit act beats a schedule, and silently
+  dropping a question off a sheet somebody built by hand is the worse of the two.
+- **🐒 THE JOURNEY DOORWAY IS A STUDENT SURFACE TOO**, and the one place a leak
+  would be invisible: the card paints, the student answers, and the teacher who
+  scheduled next term's paper never finds out it came out in September. The game
+  is its own page and cannot import `app.js`, so `scheduledAhead` is its own
+  copy of the rule — the same Singapore day key `monthKey` beside it uses, and
+  the same `YYYY-MM-DD` shape test, so it fails OPEN the same way.
+- **A VALUE THAT IS NOT A DAY KEY IS NOT A SCHEDULE, and it FAILS OPEN.**
+  `qReleaseOn` returns `''` for anything that is not exactly `YYYY-MM-DD` — a
+  `Date`, an ISO timestamp, a number, a word — so the question behaves precisely
+  as an unscheduled one: served, and wearing no badge. That direction is chosen
+  on purpose. A question served a few days early is an embarrassment a person
+  can SEE; a question withheld from every mode for ever by a value nobody can
+  read is the silent disappearance most of the guards in this file exist to
+  prevent. `_rapidApplyRelease` is the only writer and it writes that shape and
+  nothing else.
+- **A DATE THAT HAS PASSED IS NOT A SCHEDULE EITHER**, which is what makes the
+  field self-clearing: an old date costs nothing, needs no sweep, and never
+  becomes a stale ⏳ badge pointing at last month.
+- **THE DAY IS SINGAPORE'S** (`releaseDayKey`). Read off the device instead and
+  a paper is out a day early on half the class's phones and a day late on the
+  rest.
+- **THE BATCH IS CAPTURED WHEN THE FILE IS QUEUED**, synchronously, in
+  `rapidAddFiles` — never read inside the job. It rides `opts.release` through
+  `startRapidJob` → `_rapidQueuePdf` → `_rapidExpandPdf` → every page →
+  `processRapidJob`, on exactly the same footing as the batch level and for
+  exactly the same reason: a forty-page paper takes minutes to render with the
+  pad open the whole time. It is applied to **every question the page held**.
+- **IT LIVES IN `sessionStorage`**, like the batch level: a batch is one
+  sitting, so it survives a reload mid-pile and is back to "release immediately"
+  in a new tab or tomorrow. A date that persisted for a week is the one an
+  author set last Tuesday and never noticed again — and every question added
+  afterwards would sit invisible to the whole school with nothing to say why.
+  The picker's floor is **tomorrow**: a question released today is a question
+  with no schedule, and offering it as one is how an author believes a batch is
+  being held back when it is already out.
+- **IT SURVIVES AN EDIT FOR FREE, and that is why `releaseOn` is deliberately
+  NOT in `EDITOR_OWNED_QUESTION_FIELDS`.** The editor has no control for it, so
+  `carryOverQuestionMeta` restores it. **Adding an editor field for it later
+  means adding the name to that Set in the same commit**, or an edit would put a
+  cleared date straight back.
+- **A SCHEDULE NOBODY CAN FIND IS A SCHEDULE NOBODY CAN UNDO.** The ⏳ chip
+  (`qReleaseChipHtml`, ONE builder) is on the vetting card, both bank views and
+  the worksheet builder, and the 🗓 page lists every held-back question
+  **grouped by date**, across the bank AND the vetting list — a batch is very
+  often still in vetting when the teacher comes looking. 🚀 Release all now and
+  *Move to* act on a whole date at once. `_bankSetRelease` is the ONE writer
+  there: **QUIET** (housekeeping, not a question authored) and **rolled back
+  when the write did not land**.
+- Run **`node tools/scheduled-release-tests.mjs`** after touching any of it.
+
 ## House rules
+- After touching **⏳ the batch release date** (`qReleaseOn`, `qScheduled`,
+  `qReleased`, `qReleaseChipHtml`, `releaseDayKey`, `rapidRelease` /
+  `setRapidRelease`, `_rapidApplyRelease`, the `release` carried through
+  `rapidAddFiles` / `startRapidJob` / `_rapidQueuePdf` / `_rapidExpandPdf` /
+  `processRapidJob`, `_bankSetRelease`, a serving pool's `qReleased(q)` line, or
+  **`scheduledAhead` in `journey/index.html`**), run
+  `node tools/scheduled-release-tests.mjs`, `node tools/rapid-pdf-tests.mjs`
+  **and** `node tools/journey-quiz-tests.mjs`. Every failure here is silent in
+  one direction or the other and both land on a class. A pool that stops asking
+  the gate serves next term's paper this week, on a card that looks perfectly
+  right — which is what the CENSUS at the foot of that harness exists to catch
+  on the NEXT pool rather than the last one, and the 🐒 doorway is the one place
+  such a leak leaves no trace at all. A gate that gets too eager is worse: read
+  a `Date`, an ISO timestamp or a date that has already come round as a schedule
+  and the question vanishes from every practice mode and every quest at once,
+  for ever, with nothing anywhere to say why — which is why `qReleaseOn` fails
+  OPEN and only ever accepts `YYYY-MM-DD`. Read the day off the device instead
+  of off Singapore and a paper is out early on half the class's phones. Read the
+  picker inside the job rather than at the door and the back half of a
+  forty-page paper is filed on whatever date the author moved to next. And put
+  `releaseOn` into `EDITOR_OWNED_QUESTION_FIELDS` without giving the editor a
+  control for it and every edit silently releases the question.
 - After touching **📄 whole-PDF rapid add** (`RAPID_PDF_MAX_PAGES`,
   `RAPID_PDF_PAR`, `rapidAddFiles`, `_rapidQueuePdf`, `_rapidPdfPump`,
   `_rapidExpandPdf`, `_rapidPageFile`, `_pdfRenderPage`, `startRapidJob`'s PDF
@@ -2776,7 +2898,7 @@ THE PICTURE ALREADY ON THE QUESTION** rather than invented from nothing.
   named constant used at every call site rather than a string typed out in three
   places, and swapping the model means checking its scale first. The Science app
   (`polymathlc/cer`) carries the same pair — keep the two in step.
-- Run the twenty-seven harnesses after touching what they cover — every failure
+- Run the twenty-eight harnesses after touching what they cover — every failure
   they catch is **silent**, with nothing thrown and nothing wrong on screen:
   - `node tools/answer-key-tests.mjs`
   - `node tools/journey-board-tests.mjs` — 🏆 the Journey leaderboard. There is
@@ -2888,6 +3010,13 @@ THE PICTURE ALREADY ON THE QUESTION** rather than invented from nothing.
     quantity cuts the passage in half; a full-width `（1）` read as a question
     turns every option list into four questions; a bank that does not contain
     one of its own answers renders and prints perfectly and is unanswerable.
+  - `node tools/scheduled-release-tests.mjs` — ⏳ the batch release date. Both
+    directions are silent and both land on a class: a pool that stops asking
+    `qReleased` serves next term's paper this week on a card that looks
+    perfectly right, and a gate that reads a `Date`, an ISO timestamp or a date
+    that has already passed as a schedule makes the question vanish from every
+    mode at once, for ever, with nothing anywhere to say why. Its CENSUS is the
+    half that matters most — it fails on the NEXT pool added without the gate.
   - `node tools/rapid-pdf-tests.mjs` — ⚡ Rapid add taking PDFs. Every failure
     is silent and questions still land: a PDF sent whole comes back with every
     figure missing and its last questions truncated away, a batch level read
