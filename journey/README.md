@@ -134,3 +134,36 @@ beside your name; they break a tie and decide nothing else.
 
 Only questions from your teacher's bank count — the built-in practice ones
 never do.
+
+## Hero Combat Arts — v1.1.0 / 英雄战技
+
+Open **Hero Combat Arts** from the title or pause menu. Wukong and Erlang each
+have three persistent branches, with three ranks and one equipped art at a time.
+The first branch is free; the others cost 12 Merit to learn. Advancing costs
+24 and 40 Merit. Purchases and the remaining Merit share the existing save.
+
+- **Wukong:** Stone-Sun Rhythm rewards three confirmed swings, Returning Comet
+  connects a successful staff return to a powered strike, and Monkey
+  Constellation gives living hair clones homing support stars.
+- **Erlang:** Sealbreaker Verdict consumes Third Eye brands with the spear,
+  Hound-and-Spear Pact banks dodge credit from coordinated target strikes, and
+  Mirror Thunderstep reflects up to three nearby ordinary enemy bolts during
+  the first 0.35 seconds of a dodge. Credit becomes usable only as whole charges.
+
+Chapter scenes gain light shafts and drifting motes; every transformation has
+its own ground sigil. Bolts have directional cores, short trails and swept
+collision so fast projectiles strike the first target only. Motion effects
+respect reduced-motion settings, and new combat clocks stop during all pauses.
+
+Sound controls now include saved volume and mute preferences. Existing sound
+instruments are mixed through one volume control; individual arts/forms add
+short distinctive motifs. Paused, muted, zero-volume and hidden tabs stay silent.
+No new paid assets, APIs or AI calls are used. The language-specific question
+bank, shadow-root quiz, question gates and leaderboard rules are unchanged.
+
+The game now loads local `combat-arts.js` and `combat-arts.css` next to the HTML;
+keep these files with it when hosting. Embedded original artwork stays intact.
+Save format 7 retains the existing browser key and migrates older saves.
+
+Checks: `node --test tools/journey-combat-tests.mjs`, the existing Journey quiz
+and board tests, and `node tools/journey-combat-browser-tests.mjs` (Playwright).

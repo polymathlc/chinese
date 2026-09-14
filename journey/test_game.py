@@ -82,7 +82,7 @@ def test_game_features():
     body_open = html.find("<body>")
     canvas_pos = html.find('<canvas id="gameCanvas"')
     script_open = html.find("<script>")
-    script_close = html.find("</script>")
+    script_close = html.find("</script>", script_open)
     body_close = html.find("</body>")
 
     assert style_close < body_open < canvas_pos < script_open < script_close < body_close, "HTML structure order must be correct!"
