@@ -203,6 +203,7 @@
       const chosen=art(),suffix=chosen.id==='rhythm'?`${state.rhythm}/3`:chosen.id==='recall'?text(state.recall>0?'Strike ready':'Throw → catch → strike',state.recall>0?'棍击已强化':'飞棒 → 收回 → 棍击'):chosen.id==='clones'?text(state.clones>0?'Stars active':'Cast hair clones',state.clones>0?'星阵生效':'施放分身'):chosen.id==='verdict'?text('Eye brand → spear','天眼烙印 → 枪击'):chosen.id==='pack'?text(state.pactTimer>0?'Strike hound target':'Hound → spear',state.pactTimer>0?'枪击哮天犬目标':'哮天犬 → 枪击'):text(state.guard>0?'Reflecting':'Dodge through bolts',state.guard>0?'反射生效':'闪避接近飞弹');
       badge.textContent=`${chosen.icon} ${label(chosen)} ${level()}/3 · ${suffix}`;badge.style.borderColor=chosen.color;
       for(const button of document.querySelectorAll('[data-journey-arts]'))button.textContent=text('✦ Hero Combat Arts','✦ 英雄战技');
+      for(const control of document.querySelectorAll('.journey-volume')){const volumeLabel=text('Sound level','音量');control.querySelector('span').textContent=volumeLabel;control.querySelector('input').setAttribute('aria-label',volumeLabel);}
     }
     document.addEventListener('visibilitychange',syncAudio);
     syncAudio();hud();
