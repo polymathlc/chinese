@@ -1,0 +1,40 @@
+name: Wukong combat checks
+on:
+  pull_request:
+    paths: ['app.js', 'journey/index.html', 'journey/combat-*.js', 'journey/combat-*.css', 'tools/journey-*.mjs', '.github/workflows/journey-combat.yml']
+  push:
+    branches: [main]
+    paths: ['app.js', 'journey/index.html', 'journey/combat-*.js', 'journey/combat-*.css', 'tools/journey-*.mjs', '.github/workflows/journey-combat.yml']
+permissions:
+  contents: read
+jobs:
+  combat:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Check hero skills and existing question gates
+        run: |
+          node --test tools/journey-combat-tests.mjs
+          node tools/journey-quiz-tests.mjs
+          node tools/journey-board-tests.mjs
+      - name: Install isolated browser runtime
+        run: |
+          npm install --prefix "$RUNNER_TEMP/journey-browser" --no-audit --no-fund playwright@1.62.1
+          "$RUNNER_TEMP/journey-browser/node_modules/.bin/playwright" install --with-deps chromium
+      - name: Play the production Wukong game
+        env:
+          PLAYWRIGHT_MODULE: ${{ runner.temp }}/journey-browser/node_modules/playwright/index.mjs
+          JOURNEY_SCREENSHOTS: ${{ runner.temp }}/journey-combat-qa
+          GAME_SCREENSHOTS: ${{ runner.temp }}/journey-combat-qa
+        run: node tools/journey-combat-browser-tests.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: journey-combat-browser
+          path: ${{ runner.temp }}/journey-combat-qa
+          if-no-files-found: ignore
+          retention-days: 7

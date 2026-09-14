@@ -1,0 +1,59 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import http from 'node:http';
+import {fileURLToPath,pathToFileURL} from 'node:url';
+const root=path.resolve(fileURLToPath(new URL('..',import.meta.url)));
+const modulePath=process.env.PLAYWRIGHT_MODULE;
+const {chromium}=await import(modulePath?pathToFileURL(modulePath).href:'playwright');
+const screenshots=process.env.JOURNEY_SCREENSHOTS||process.env.GAME_SCREENSHOTS||path.join(root,'test-results/journey-combat');await fs.mkdir(screenshots,{recursive:true});
+const server=http.createServer(async(req,res)=>{try{const url=new URL(req.url,'http://localhost'),filename=path.join(root,decodeURIComponent(url.pathname));if(!filename.startsWith(root+path.sep))throw Error('path');const data=await fs.readFile(filename);res.setHeader('Content-Type',filename.endsWith('.js')?'text/javascript':filename.endsWith('.css')?'text/css':'text/html');res.end(data);}catch{res.statusCode=404;res.end();}});
+await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));const origin=`http://127.0.0.1:${server.address().port}`;
+const browser=await chromium.launch({headless:true,args:['--disable-dev-shm-usage'],...(process.env.PLAYWRIGHT_BROWSER_CHANNEL?{channel:process.env.PLAYWRIGHT_BROWSER_CHANNEL}:{})});const page=await browser.newPage({viewport:{width:1280,height:900}});const errors=[];
+page.on('pageerror',e=>errors.push(e.message));page.on('console',m=>{if(m.type()==='error'&&m.text().includes('Game loop render error'))errors.push(m.text());});
+await page.route('https://**/*',route=>route.abort());
+await page.addInitScript(()=>{window.requestAnimationFrame=()=>1;});
+try{
+ await page.goto(origin+'/journey/index.html',{waitUntil:'domcontentloaded',timeout:120000});
+ await page.waitForFunction(()=>typeof journeyCombatReady!=='undefined'&&journeyCombatReady,null,{timeout:60000});
+ await page.evaluate(language=>{gameState.language=language;gameState.ashes=120;applyGameLanguage();journeyCombat.hud();},process.env.JOURNEY_TEST_LANGUAGE||(path.basename(root)==='chinese'?'zh':'en'));
+ await page.locator('[data-journey-arts]').first().click();
+ await page.locator('[data-invest="recall"]').click();
+ assert.equal(await page.evaluate(()=>combatArtsState.equipped.wukong),'recall');
+ assert.equal(await page.evaluate(()=>gameState.ashes),108);
+ assert.equal(await page.evaluate(()=>JSON.parse(localStorage.getItem('havocInHeavenMetaV3')).skills.combatArts.ranks.recall),1);
+ await page.screenshot({path:path.join(screenshots,'01-wukong-arts.png')});
+ await page.keyboard.press('Escape');assert.equal(await page.locator('#journey-combat-modal').isVisible(),false);
+ assert.equal(await page.evaluate(()=>gameState.isPaused),true);
+ const result=await page.evaluate(()=>{
+   const checks=[],ok=(value,message)=>{if(!value)throw Error(message);checks.push(message);};
+   const target=(x=90,y=0)=>({x,y,radius:18,hp:10000,maxHp:10000,alive:true,isAlly:false,damage:0,takeDamage(d){this.damage+=d;this.hp-=d;},applySlow(){this.slowed=true;},applyStun(){this.stunned=true;}});
+   function setup(hero,id,rank=3){gameState.playableHero=hero;gameState.isPaused=false;gameState.dialogueActive=false;gameState.rewardSelectionActive=false;gameState.bossOutcomeActive=false;gameState.hasStarted=true;combatArtsState=JourneyCombat.sanitize({ranks:{[id]:rank},equipped:{[hero]:id}});player.resetForRun();player.x=0;player.y=0;player.qi=100;player.maxQi=100;enemies=[];projectiles=[];monkeyClones=[];journeyCombat.setPaused(false);}
+   setup('wukong','rhythm');let enemy=target(),extra=target(110,10);enemies=[enemy,extra];
+   const pending={};ok(journeyCombat.melee(player,enemy,100,pending)===100,'first rhythm hit is ordinary');journeyCombat.melee(player,extra,100,pending);ok(journeyCombat.getState().rhythm===1,'one sweep cannot charge rhythm repeatedly');journeyCombat.melee(player,enemy,100,{});player.qi=0;ok(journeyCombat.melee(player,enemy,100,{})>130,'third separate hit triggers finisher');ok(extra.damage>0&&player.qi===6,'rank-three finisher splashes and restores Qi');
+   journeyCombat.melee(player,enemy,100,{});journeyCombat.tick(4.1);ok(journeyCombat.getState().rhythm===0,'rhythm expires instead of accumulating across long gaps');
+   setup('wukong','recall');enemy=target();enemies=[enemy];player.qi=0;player.onRuyiCatch({hitCount:0});ok(journeyCombat.getState().recall===0,'missed throw gives no recall bonus');player.onRuyiCatch({hitCount:1});ok(player.qi===9&&journeyCombat.getState().recall===3,'landed return empowers and restores Qi');ok(journeyCombat.melee(player,enemy,100,{})===180,'return buff amplifies next melee');ok(journeyCombat.melee(player,enemy,100,{})===100,'return buff consumed once');
+   setup('wukong','clones');enemy=target(160,0);enemies=[enemy];player.performCast();ok(journeyCombat.getState().clones===6,'successful hair-clone cast enables constellation');ok(player.qi===39,'clone art refunds exactly 14 Qi after a 75-Qi cast');monkeyClones=[{x:0,y:0,alive:true}];journeyCombat.tick(.6);ok(projectiles.length===1&&projectiles[0].journeyHoming===enemy,'living clone launches a real homing star');projectiles[0].update(.5);ok(enemy.damage>0,'star deals damage through production projectile collision');
+   setup('erlang','verdict');enemy=target();extra=target(160,0);enemy.judgmentMarkTimer=4;enemies=[enemy,extra];player.qi=0;ok(journeyCombat.melee(player,enemy,100,{})>130,'Third Eye brand enables spear verdict');ok(enemy.judgmentMarkTimer===0&&player.qi===5,'verdict consumes mark and restores capped Qi');ok(projectiles.length===1&&projectiles[0].journeyHoming===extra,'verdict chains to another foe');ok(journeyCombat.melee(player,enemy,100,{})===100,'unmarked target cannot trigger verdict again');
+   setup('erlang','pack');enemy=target();enemies=[enemy];player.resolveXiaotianquanCommand({x:enemy.x,y:enemy.y,specialRank:1});ok(journeyCombat.getState().pact===enemy,'hound command identifies actual pursuit target');player.dashCharges=0;journeyCombat.melee(player,enemy,100,{});ok(player.dashCharges===0&&journeyCombat.getState().pactCredit===.75&&enemy.slowed&&enemy.stunned,'follow-up spear pins and banks partial dodge credit');journeyCombat.melee(player,enemy,100,{});ok(player.dashCharges===0,'hound reward consumed once');player.resolveXiaotianquanCommand({x:enemy.x,y:enemy.y});journeyCombat.melee(player,enemy,100,{});ok(player.dashCharges===1&&journeyCombat.getState().pactCredit===.5,'repeated pacts award whole dodge charges only');for(let i=0;i<5;i++){player.resolveXiaotianquanCommand({x:enemy.x,y:enemy.y});journeyCombat.melee(player,enemy,100,{});}ok(player.dashCharges===player.maxDashCharges&&Number.isInteger(player.dashCharges)&&journeyCombat.getState().pactCredit===0,'pact charges stay whole and never exceed maximum');
+   setup('erlang','guard');enemy=target(180,0);enemies=[enemy];gameState.mouse.x=viewWidth/2+200;gameState.mouse.y=viewHeight/2;player.performDash();for(let i=0;i<4;i++)projectiles.push(new Projectile(60,i*2,-350,0,15,'red',true));journeyCombat.tick(.02);ok(projectiles.filter(p=>!p.isEnemy).length===3,'rank-three mirror reflects only three real bolts');ok(projectiles.filter(p=>!p.isEnemy).every(p=>p.vx>0),'reflected bolts aim toward enemies');journeyCombat.tick(.4);ok(journeyCombat.getState().guard===0,'reflection window expires');
+   setup('wukong','rhythm');enemy=target(80,0);extra=target(160,0);enemies=[extra,enemy];const shot=new Projectile(0,0,2000,0,23,'gold',false);shot.update(.1);ok(enemy.damage===23&&extra.damage===0&&!shot.alive,'fast bolt strikes nearest contact once despite enemy array order');shot.update(.1);ok(enemy.damage===23,'dead projectile cannot hit again');
+   journeyCombat.melee(player,enemy,100,{});journeyCombat.setPaused(true);const before=journeyCombat.getState().rhythmTimer;journeyCombat.tick(10);ok(journeyCombat.getState().rhythmTimer===before,'combat art clocks freeze while quiz or pause holds gameplay');
+   player.resetForRun();ok(journeyCombat.getState().rhythm===0,'new run clears transient combat charges');
+   return checks;
+ });
+ console.log(`${result.length} production gameplay assertions passed`);
+ // Exercise the actual audio engine, not a second implementation.
+ await page.evaluate(()=>{sound.init();journeyCombat.setPaused(false);sound.muted=false;sound.volume=.5;});
+ const audio=await page.evaluate(()=>{let count=0;const old=sound.ctx.createOscillator.bind(sound.ctx);sound.ctx.createOscillator=()=>{count++;return old();};sound.playDash();const active=count;sound.muted=true;sound.playDash();const muted=count; sound.muted=false;journeyCombat.setPaused(true);sound.playDash();const frozen=count;journeyCombat.setPaused(false);Object.defineProperty(document,'hidden',{configurable:true,value:true});document.dispatchEvent(new Event('visibilitychange'));sound.playDash();const hidden=count,hiddenMuted=sound.paused&&sound.output.gain.value===0;delete document.hidden;document.dispatchEvent(new Event('visibilitychange'));const visible=!sound.paused;sound.volume=0;sound.playDash();return{active,muted,frozen,hidden,hiddenMuted,visible,zero:count};});
+ assert.ok(audio.active>0);assert.equal(audio.active,audio.muted);assert.equal(audio.active,audio.frozen);assert.equal(audio.active,audio.hidden);assert.ok(audio.hiddenMuted&&audio.visible);assert.equal(audio.active,audio.zero);
+ await page.evaluate(()=>{gameState.playableHero='erlang';campaignUnlocks.erlangPlayable=true;gameState.isPaused=true;journeyCombat.setPaused(true);journeyCombat.show();});
+ await page.screenshot({path:path.join(screenshots,'02-erlang-arts.png')});
+ await page.setViewportSize({width:390,height:844});await page.screenshot({path:path.join(screenshots,'03-mobile-arts.png')});
+ assert.ok(await page.evaluate(()=>document.querySelector('.journey-art-sheet').scrollWidth<=document.querySelector('.journey-art-sheet').clientWidth+1));
+ await page.keyboard.press('Escape');
+ await page.setViewportSize({width:1280,height:900});
+ await page.evaluate(()=>{document.getElementById('start-screen').style.display='none';gameState.hasStarted=true;gameState.isPaused=true;gameState.chamberCleared=false;gameState.chamberIndex=1;gameState.campaignBiome=0;gameState.playableHero='wukong';player.resetForRun();player.isTransformed=true;player.activeTransformationForm='dragon';enemies=[];monkeyClones=[];fxList=[];floatingTexts=[];projectiles=[new Projectile(player.x+195,player.y+50,-250,0,10,'#f87171',true)];for(let i=0;i<5;i++)projectiles[0].update(.03);gameLoop(1000);});
+ await page.screenshot({path:path.join(screenshots,'04-atmosphere-and-form.png')});
+ assert.deepEqual(errors,[]);console.log('Audio gates, saved arts, mobile layout, actual world rendering and page startup passed.');
+}finally{await browser.close();await new Promise(resolve=>server.close(resolve));}
