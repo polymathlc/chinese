@@ -8917,7 +8917,7 @@ body.zhime-field .zhime-pill, .zhime-pill.on { display: inline-flex; }
 <div class="confirm-overlay" id="aiEngineOverlay">
   <div class="confirm-dialog" style="max-width:560px;text-align:left;max-height:88vh;overflow-y:auto;">
     <h3 style="margin-bottom:4px;">AI Engine</h3>
-    <p style="color:var(--text-muted);font-size:0.85rem;margin-bottom:16px;">Choose which AI powers every mode in this app — <strong>Create Question's AI answer &amp; explanation, Build from screenshot / PDF, Rapid add</strong>, plus marking and explanations. Switch to ChatGPT gpt-6-astra for heavy-duty question building, and back to Gemini for everyday use. Your choice applies to <strong>every signed-in device</strong> — set it once and every student follows until you change it back. It picks which is tried <strong>first</strong>, never which is available: whichever one you choose, the other takes over the moment it refuses — a spending cap, a quota, a connection that drops — so a run never comes back empty because one of them was down.</p>
+    <p style="color:var(--text-muted);font-size:0.85rem;margin-bottom:16px;">ChatGPT <strong>gpt-6.1-sol</strong> is the default for text, vision and thinking — including answers, explanations, screenshots, PDFs, Rapid add, marking and widgets. Gemini and Kimi take over automatically if the preferred provider refuses. Your engine choice applies to <strong>every signed-in device</strong>. It picks which is tried <strong>first</strong>, never which is available.</p>
 
     <div class="form-group">
       <label class="form-label">Right now</label>
@@ -8927,23 +8927,24 @@ body.zhime-field .zhime-pill, .zhime-pill.on { display: inline-flex; }
     <div class="form-group">
       <label class="form-label">Engine</label>
       <label style="display:flex;align-items:center;gap:10px;font-size:0.9rem;cursor:pointer;padding:10px 12px;border:1px solid var(--border);border-radius:10px;margin-bottom:8px;">
-        <input type="radio" name="aiEngineChoice" value="gemini" checked onchange="aiEngineChoicePreview('gemini')">
-        <span><strong>Gemini 3.8 Flash</strong> <span style="color:var(--text-muted);">— Firebase AI Logic &middot; default &middot; no key needed</span></span>
+        <input type="radio" name="aiEngineChoice" value="gemini" onchange="aiEngineChoicePreview('gemini')">
+        <span><strong>Gemini 3.8 Flash</strong> <span style="color:var(--text-muted);">— automatic backup &middot; Firebase AI Logic &middot; no key needed</span></span>
       </label>
       <label style="display:flex;align-items:center;gap:10px;font-size:0.9rem;cursor:pointer;padding:10px 12px;border:1px solid var(--border);border-radius:10px;">
-        <input type="radio" name="aiEngineChoice" value="openai" onchange="aiEngineChoicePreview('openai')">
-        <span><strong>ChatGPT</strong> <span style="color:var(--text-muted);">— gpt-6-astra &middot; key held on the server &middot; nothing to set up</span></span>
+        <input type="radio" name="aiEngineChoice" value="openai" checked onchange="aiEngineChoicePreview('openai')">
+        <span><strong>ChatGPT</strong> <span style="color:var(--text-muted);">— gpt-6.1-sol &middot; default text, vision and thinking &middot; server key</span></span>
       </label>
       <label style="display:flex;align-items:center;gap:10px;font-size:0.9rem;cursor:pointer;padding:10px 12px;border:1px solid var(--border);border-radius:10px;margin-top:8px;">
         <input type="radio" name="aiEngineChoice" value="kimi" onchange="aiEngineChoicePreview('kimi')">
-        <span><strong>Kimi</strong> <span style="color:var(--text-muted);">— Moonshot AI &middot; a third supplier, on its own bill and its own cap</span></span>
+        <span><strong>Kimi</strong> <span style="color:var(--text-muted);">— automatic backup &middot; Moonshot AI</span></span>
       </label>
     </div>
 
     <div class="form-group">
       <label class="form-label">ChatGPT model</label>
       <select id="aiEngineModel" class="form-input">
-        <option value="gpt-6-astra" selected>gpt-6-astra &mdash; newest (recommended)</option>
+        <option value="gpt-6.1-sol" selected>gpt-6.1-sol &mdash; default text, vision and thinking</option>
+        <option value="gpt-6-astra">gpt-6-astra</option>
         <option value="gpt-6-astra-fast">gpt-6-astra-fast &mdash; same model, quicker, less thinking</option>
         <option value="gpt-5.6-sol">gpt-5.6-sol &mdash; the previous flagship</option>
         <option value="gpt-4o-mini">gpt-4o-mini &mdash; fast &amp; cheap</option>

@@ -40,6 +40,8 @@ const api = new Function(`
 var _pref = 'gemini', _key = '', _gemini = true, _kimiKey = '', _kimiOk = true;
 function getAiEngine() { return _pref; }
 function getOpenAiKey() { return _key; }
+function getOpenAiModel() { return 'gpt-6.1-sol'; }
+function openAiReasoningEffort(v) { return ['low', 'medium', 'high', 'xhigh', 'max'].includes(v) ? v : 'low'; }
 var localStorage = {
   getItem: function (k) { return /kimi_key/.test(k) ? _kimiKey : ''; },
   setItem: function () {}, removeItem: function () {}
@@ -112,15 +114,15 @@ ok('choosing ChatGPT with no device key still works — the server has one',
    Kimi has to be reachable as a first choice and reachable as a last resort. */
 api.pref = 'kimi'; api.kimiKey = 'sk-k';
 ok('choosing Kimi puts it first and keeps the others behind it',
-   api.aiEngineOrder().join() === 'kimi,kimiKey,gemini,openai', api.aiEngineOrder().join());
+   api.aiEngineOrder().join() === 'kimi,kimiKey,openai,gemini', api.aiEngineOrder().join());
 api.kimiKey = '';
 ok('choosing Kimi with no device key still works — the server has one',
-   api.aiEngineOrder().join() === 'kimi,gemini,openai', api.aiEngineOrder().join());
+   api.aiEngineOrder().join() === 'kimi,openai,gemini', api.aiEngineOrder().join());
 /* An engine nobody has heard of must not empty the list: a stale word in the
    shared setting would otherwise take the AI off every device at once. */
 api.pref = 'nosuchengine';
 ok('an unknown preference still leaves every route on the list',
-   api.aiEngineOrder().join() === 'gemini,openai,kimi', api.aiEngineOrder().join());
+   api.aiEngineOrder().join() === 'openai,gemini,kimi', api.aiEngineOrder().join());
 
 api.pref = 'gemini'; api.gemini = false;
 ok('a Firebase project that would not start still has routes',
@@ -257,7 +259,7 @@ ok('the chooser reports the live route order', /function renderAiEngineStatus\(/
 ok('…and is repainted when it opens', /renderAiEngineStatus\(\);\n  document\.getElementById\('aiEngineOverlay'\)/.test(src));
 ok('…and previews the order as the radios change', /function aiEngineChoicePreview\(/.test(src) && /aiEngineChoicePreview\('openai'\)/.test(html));
 /* A preview that saved would make Cancel a lie. */
-ok('…without committing the choice', /finally \{[\s\S]{0,120}AI_ENGINE_STORE\.engine, was/.test(src));
+ok('…without committing the choice', /finally \{\s*_aiSharedEngine = was;/.test(src));
 ok('a server key that is not set up yet says exactly that', /OPENAI_API_KEY has not been set/.test(src));
 ok('the chooser says the choice is an ORDER, not a switch',
    /never which is available/.test(html));
@@ -292,10 +294,10 @@ ok('the callable is still there as the fallback', /httpsCallable\(_aiFns, 'aiEng
 ok('it is a live listener', /_aiCfgStop = onSnapshot\(_aiCfgRef\(\)/.test(src));
 ok('…that comes down with the account, or one account governs the next',
    /async function handleLogout\(\) \{[\s\S]{0,220}aiEngineStopShared\(\);/.test(src));
-ok('…and an unset field means Gemini, so a centre that never touches it is unaffected',
-   /AI_ENGINES\.includes\(eng\) \? eng : 'gemini'/.test(src));
+ok('…and an unset field means ChatGPT',
+   /function aiSharedPreference\(data\)/.test(src) && /if \(!AI_ENGINES\.includes\(d.aiEngine\)\) return 'openai';/.test(src));
 ok('…and the shared setting knows all three engines',
-   /const AI_ENGINES = \['gemini', 'openai', 'kimi'\];/.test(src));
+   /const AI_ENGINES = \['openai', 'gemini', 'kimi'\];/.test(src));
 ok('…at sign-in, from the one function every role comes through',
    /function configureSidebarForRole\(role\) \{[\s\S]{0,400}aiEngineInit\(\);/.test(src));
 ok('…and refreshed when the chooser opens', /aiEngineLoadShared\(true\)\.then\(renderAiEngineStatus\)/.test(src));

@@ -261,15 +261,13 @@ function transcribeRouteNote() {
   return 'Speech is transcribed by ' + AI_TRANSCRIBE_MODEL + ', with ' + AI_MODEL + ' behind it.';
 }
 
-// ── Optional ChatGPT (OpenAI) engine ─────────────────────────────────
-// Admin-only toggle (sidebar → AI Engine). The choice, model and key live in
-// localStorage on this device only — same pattern as bar-model.html. When
-// active, askGemini/askGeminiVision route through OpenAI first and fall back
-// to Gemini on any failure, so students without a key are never affected.
-const AI_ENGINE_STORE = { engine: 'zh_ai_engine', key: 'zh_openai_key', model: 'zh_openai_model', imageModel: 'zh_openai_image_model', kimiKey: 'zh_kimi_key', kimiModel: 'zh_kimi_model', modelGen: 'zh_openai_model_gen' };
-const OPENAI_DEFAULT_MODEL = 'gpt-6-astra';
+// ChatGPT is the default for text, vision and thinking. Provider choice is
+// shared through this subject's existing admin pointer; model overrides and
+// optional fallback keys stay on this device.
+const AI_ENGINE_STORE = { engine: 'zh_ai_engine', key: 'zh_openai_key', model: 'zh_openai_model', imageModel: 'zh_openai_image_model', kimiKey: 'zh_kimi_key', kimiModel: 'zh_kimi_model', modelGen: 'zh_openai_model_gen', modelChoice: 'zh_openai_model_choice', engineGen: 'zh_ai_engine_gen', engineChoice: 'zh_ai_engine_choice' };
+const OPENAI_DEFAULT_MODEL = 'gpt-6.1-sol';
 /* A REASONING MODEL IS A FAMILY, NOT ONE ID, and this is the one place the
-   family is named. gpt-5.x and gpt-6-astra behave identically where the
+   family is named. gpt-5.x and gpt-6.1-sol behave identically where the
    request SHAPE is concerned — both take `reasoning_effort` and both REFUSE a
    temperature — so a gate written as /^gpt-5/ does not merely miss the newer
    model, it sends it the WRONG REQUEST: a temperature it answers with a 400,
@@ -284,32 +282,46 @@ const OPENAI_REASONING_RE = /^(gpt-[5-9]|o[1-9])/;
    that was only ever a default is lifted to the new one ONCE, per device, and
    the flag is what makes a DELIBERATE pick of the old model stick: it is still
    in the dropdown, and choosing it there has to mean something. */
-const OPENAI_SUPERSEDED_MODELS = ['gpt-5.6-sol'];
-const OPENAI_MODEL_GEN = 'astra';
+const OPENAI_SUPERSEDED_MODELS = ['gpt-5.6-sol', 'gpt-6-astra'];
+const OPENAI_MODEL_GEN = 'sol61';
 (function _openAiLiftDefaultOnce() {
   try {
+    if (localStorage.getItem(AI_ENGINE_STORE.engineGen) !== OPENAI_MODEL_GEN) {
+      const engine = localStorage.getItem(AI_ENGINE_STORE.engine);
+      if ((!engine || engine === 'gemini') && localStorage.getItem(AI_ENGINE_STORE.engineChoice) !== 'manual') {
+        localStorage.setItem(AI_ENGINE_STORE.engine, 'openai');
+      }
+      localStorage.setItem(AI_ENGINE_STORE.engineGen, OPENAI_MODEL_GEN);
+    }
     if (localStorage.getItem(AI_ENGINE_STORE.modelGen) === OPENAI_MODEL_GEN) return;
-    localStorage.setItem(AI_ENGINE_STORE.modelGen, OPENAI_MODEL_GEN);
     const m = (localStorage.getItem(AI_ENGINE_STORE.model) || '').trim();
-    if (m && OPENAI_SUPERSEDED_MODELS.indexOf(m) >= 0) localStorage.setItem(AI_ENGINE_STORE.model, OPENAI_DEFAULT_MODEL);
+    if (m && OPENAI_SUPERSEDED_MODELS.indexOf(m) >= 0 && localStorage.getItem(AI_ENGINE_STORE.modelChoice) !== 'manual') localStorage.setItem(AI_ENGINE_STORE.model, OPENAI_DEFAULT_MODEL);
+    localStorage.setItem(AI_ENGINE_STORE.modelGen, OPENAI_MODEL_GEN);
   } catch (e) { /* private browsing: nothing is stored, so there is nothing to lift */ }
 })();
-function getAiEngine() { try { return localStorage.getItem(AI_ENGINE_STORE.engine) || 'gemini'; } catch (e) { return 'gemini'; } }
+function getAiEngine() { try { return localStorage.getItem(AI_ENGINE_STORE.engine) || 'openai'; } catch (e) { return 'openai'; } }
 function getOpenAiKey() { try { return (localStorage.getItem(AI_ENGINE_STORE.key) || '').trim(); } catch (e) { return ''; } }
 function getOpenAiModel() { try { return localStorage.getItem(AI_ENGINE_STORE.model) || OPENAI_DEFAULT_MODEL; } catch (e) { return OPENAI_DEFAULT_MODEL; } }
 function openAiActive() { return getAiEngine() === 'openai' && !!getOpenAiKey(); }
 
-async function askOpenAI(prompt, media, { maxOutputTokens = 512, temperature, json = false } = {}) {
+function openAiReasoningEffort(value) { return ['low', 'medium', 'high', 'xhigh', 'max'].includes(value) ? value : 'low'; }
+async function askOpenAI(prompt, media, { maxOutputTokens = 512, temperature, json = false, reasoningEffort = 'low', exactOutputBudget = false } = {}) {
   const model = getOpenAiModel();
   const content = [{ type: 'text', text: prompt }];
   (media || []).forEach((m, i) => {
     if (/^image\//.test(m.mimeType || '')) content.push({ type: 'image_url', image_url: { url: 'data:' + m.mimeType + ';base64,' + m.data, detail: 'high' } });
     else content.push({ type: 'file', file: { filename: 'upload-' + (i + 1) + '.pdf', file_data: 'data:' + (m.mimeType || 'application/pdf') + ';base64,' + m.data } });
   });
-  const body = { model, messages: [{ role: 'user', content }], max_completion_tokens: Math.max(1024, maxOutputTokens) };
-  if (json) body.response_format = { type: 'json_object' };
+  const reasoning = OPENAI_REASONING_RE.test(model);
+  const completionBudget = exactOutputBudget ? maxOutputTokens : reasoning ? maxOutputTokens + 4096 : maxOutputTokens;
+  const body = { model, messages: [{ role: 'user', content }], max_completion_tokens: Math.max(1024, completionBudget) };
+  if (json) {
+    body.response_format = { type: 'json_object' };
+    if (!/json/i.test(prompt)) content.push({ type: 'text', text: 'Reply with JSON only.' });
+  }
   // A reasoning model only runs at its default temperature; sending one is a 400
   if (temperature !== undefined && !OPENAI_REASONING_RE.test(model)) body.temperature = temperature;
+  if (OPENAI_REASONING_RE.test(model)) body.reasoning_effort = openAiReasoningEffort(reasoningEffort);
   const res = await fetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + getOpenAiKey() },
@@ -333,11 +345,10 @@ async function askOpenAI(prompt, media, { maxOutputTokens = 512, temperature, js
    project, so when that project's billing cap is hit they ALL die at once
    and identically: "[429] Your billing account has exceeded its monthly
    spending cap", on every call, on every device, until the month turns over.
-   ChatGPT is the second engine, and this is how it is reached.
+   ChatGPT is the default engine; Gemini and Kimi are automatic backups.
 
-   • THE ORDER IS THE DESIGN: Gemini, then ChatGPT ON THE SERVER, then
-     ChatGPT on a key pasted into THIS browser. Reversed by the engine
-     chooser, which is what "choose the engine" now means: a preference for
+   • THE ORDER IS THE DESIGN: ChatGPT ON THE SERVER, then an optional key in
+     THIS browser, then Gemini and Kimi. The engine chooser is a preference for
      which is tried FIRST, never a switch that leaves the other unavailable.
    • THE SERVER ROUTE IS WHAT MAKES THE CHOICE REAL. `askOpenAiServer` calls
      the `askOpenAi` Cloud Function in `polymathlc/math/functions`, which
@@ -370,7 +381,7 @@ const AI_ROUTE_LABEL = { gemini: 'Gemini', openai: 'ChatGPT (server key)', opena
    the server's key and, behind it, a key pasted into this browser. Choosing
    an engine picks which is tried FIRST; the other two stay behind it, which
    is what makes a capped supplier survivable rather than fatal. */
-const AI_ENGINES = ['gemini', 'openai', 'kimi'];
+const AI_ENGINES = ['openai', 'gemini', 'kimi'];
 const AI_ENGINE_NAME = { gemini: 'Gemini', openai: 'ChatGPT', kimi: 'Kimi' };
 const _aiDown = { gemini: 0, openai: 0, openaiKey: 0, kimi: 0, kimiKey: 0 };
 const _aiWhy = { gemini: '', openai: '', openaiKey: '', kimi: '', kimiKey: '', shared: '' };
@@ -395,6 +406,15 @@ const AI_SHARED_TTL = 5 * 60 * 1000;
 
 function aiPreferredEngine() {
   return _aiSharedEngine || getAiEngine();
+}
+
+// Unmarked Gemini is the previous default. A recorded admin choice keeps its
+// meaning, while an untouched centre moves to ChatGPT on every device.
+function aiSharedPreference(data) {
+  const d = data || {};
+  if (!AI_ENGINES.includes(d.aiEngine)) return 'openai';
+  if (d.aiEngine !== 'gemini' || d.aiEngineAt || d.aiEngineBy || d.aiEngineChoice === 'manual') return d.aiEngine;
+  return 'openai';
 }
 
 /* WHERE THE SHARED SETTING LIVES, and why it is not a new document.
@@ -422,11 +442,7 @@ function aiEngineWatchShared() {
   if (_aiCfgStop) return;
   try {
     _aiCfgStop = onSnapshot(_aiCfgRef(), snap => {
-      const eng = snap.exists() && snap.data() ? snap.data().aiEngine : null;
-      // An unset field means nobody has chosen, which is Gemini — the default
-      // every app already had, so a centre that never touches this is
-      // unaffected.
-      _aiSharedEngine = AI_ENGINES.includes(eng) ? eng : 'gemini';
+      _aiSharedEngine = aiSharedPreference(snap.exists() ? snap.data() : null);
       _aiSharedAt = Date.now();
       _aiWhy.shared = '';
       const ov = document.getElementById('aiEngineOverlay');
@@ -447,8 +463,7 @@ async function aiEngineLoadShared(force) {
   aiEngineWatchShared();
   try {
     const snap = await getDoc(_aiCfgRef());
-    const eng = snap.exists() && snap.data() ? snap.data().aiEngine : null;
-    _aiSharedEngine = AI_ENGINES.includes(eng) ? eng : 'gemini';
+    _aiSharedEngine = aiSharedPreference(snap.exists() ? snap.data() : null);
     _aiSharedAt = Date.now();
     _aiWhy.shared = '';
     return _aiSharedEngine;
@@ -460,7 +475,8 @@ async function aiEngineLoadShared(force) {
   try {
     if (!_aiFns) _aiFns = getFunctions(app);
     const res = await httpsCallable(_aiFns, 'aiEngineConfig', { timeout: 20000 })({});
-    const eng = res && res.data && res.data.engine;
+    const cfg = res && res.data;
+    const eng = aiSharedPreference(cfg && { ...cfg, aiEngine: cfg.engine, aiEngineAt: cfg.updatedAt, aiEngineBy: cfg.updatedBy });
     if (AI_ENGINES.includes(eng)) {
       _aiSharedEngine = eng; _aiSharedAt = Date.now(); _aiWhy.shared = '';
     }
@@ -474,6 +490,7 @@ async function aiEngineSetShared(engine) {
   try {
     await setDoc(_aiCfgRef(), {
       aiEngine: engine,
+      aiEngineChoice: 'manual',
       aiEngineAt: new Date().toISOString(),
       aiEngineBy: (currentUser && currentUser.email) || ''
     }, { merge: true });
@@ -515,7 +532,7 @@ function aiEngineOrder() {
    key into. Same modular app as auth and App Check, so the callable carries
    the signed-in user and the function refuses anybody it cannot name. */
 let _aiFns = null;
-async function askOpenAiServer(prompt, media, { maxOutputTokens = 512, temperature, json = false } = {}) {
+async function askOpenAiServer(prompt, media, { maxOutputTokens = 512, json = false, reasoningEffort = 'low', exactOutputBudget = false } = {}) {
   if (!_aiFns) _aiFns = getFunctions(app);
   const call = httpsCallable(_aiFns, 'askOpenAi', { timeout: 240000 });
   const res = await call({
@@ -523,7 +540,9 @@ async function askOpenAiServer(prompt, media, { maxOutputTokens = 512, temperatu
     media: (media || []).filter(m => m && m.data).map(m => ({ mimeType: m.mimeType || 'image/jpeg', data: m.data })),
     json: !!json,
     maxOutputTokens,
-    temperature
+    exactOutputBudget,
+    model: getOpenAiModel(),
+    reasoningEffort: openAiReasoningEffort(reasoningEffort)
   });
   const text = res && res.data && res.data.text;
   if (typeof text !== 'string' || !text.trim()) throw new Error('The server backup returned an unexpected response shape.');
@@ -558,7 +577,12 @@ function getKimiModel() { try { return (localStorage.getItem(AI_ENGINE_STORE.kim
 /* A key saved in THIS browser — the fallback route, exactly as ChatGPT's is.
    The real key belongs on the server (below), because a key pasted per device
    rescues the teacher's laptop and no student's phone. */
-async function askKimiDirect(prompt, media, { maxOutputTokens = 512, temperature, json = false } = {}) {
+function kimiReasoningEffort(value) {
+  if (value === 'medium' || value === 'high') return 'high';
+  if (value === 'xhigh' || value === 'max') return 'max';
+  return 'low';
+}
+async function askKimiDirect(prompt, media, { maxOutputTokens = 512, temperature, json = false, reasoningEffort = 'low' } = {}) {
   const key = getKimiKey();
   if (!key) throw new Error('No Kimi key is saved in this browser.');
   const model = getKimiModel();
@@ -571,14 +595,22 @@ async function askKimiDirect(prompt, media, { maxOutputTokens = 512, temperature
     if (!/^image\//.test(m.mimeType || '')) throw new Error('Kimi cannot read a ' + (m.mimeType || 'file') + ' attachment — that one needs Gemini or ChatGPT.');
     content.push({ type: 'image_url', image_url: { url: 'data:' + m.mimeType + ';base64,' + m.data } });
   });
-  const body = { model, messages: [{ role: 'user', content }], max_tokens: Math.max(1024, maxOutputTokens) };
+  const body = { model, messages: [{ role: 'user', content }] };
+  const k3 = /^kimi-k3(?:$|-)/i.test(model);
+  if (k3) {
+    // K3 controls thinking through reasoning_effort and rejects sampling knobs.
+    body.max_completion_tokens = Math.max(1024, maxOutputTokens);
+    body.reasoning_effort = kimiReasoningEffort(reasoningEffort);
+  } else {
+    body.max_tokens = Math.max(1024, maxOutputTokens);
+  }
   if (json) {
     body.response_format = { type: 'json_object' };
     // Strict JSON mode is refused unless the word appears in the messages, so
     // a prompt that never says it would 400 rather than answer.
     if (!/json/i.test(text)) content.push({ type: 'text', text: 'Reply with JSON only.' });
   }
-  if (temperature !== undefined) body.temperature = temperature;
+  if (temperature !== undefined && !k3) body.temperature = temperature;
   const res = await fetch(KIMI_API_BASE + '/chat/completions', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + key },
@@ -605,7 +637,7 @@ async function askKimiDirect(prompt, media, { maxOutputTokens = 512, temperature
    redeploy a Cloud Function to follow it. The function only accepts a
    Moonshot-shaped id, so this is not a client naming somebody else's
    expensive model; it is a client naming which Kimi. */
-async function askKimiServer(prompt, media, { maxOutputTokens = 512, temperature, json = false } = {}) {
+async function askKimiServer(prompt, media, { maxOutputTokens = 512, temperature, json = false, reasoningEffort = 'low' } = {}) {
   if (!_aiFns) _aiFns = getFunctions(app);
   const call = httpsCallable(_aiFns, 'askKimi', { timeout: 240000 });
   const res = await call({
@@ -614,7 +646,8 @@ async function askKimiServer(prompt, media, { maxOutputTokens = 512, temperature
     json: !!json,
     maxOutputTokens,
     temperature,
-    model: getKimiModel()
+    model: getKimiModel(),
+    reasoningEffort: kimiReasoningEffort(reasoningEffort)
   });
   const text = res && res.data && res.data.text;
   if (typeof text !== 'string' || !text.trim()) throw new Error('The Kimi server route returned an unexpected response shape.');
@@ -701,14 +734,16 @@ async function askKimi(prompt, media, opts) {
 
 /* The raw Gemini call, factored out so the loop above has one thing to run.
    Both doors used to carry their own copy of it. */
-async function askGeminiDirect(prompt, media, { maxOutputTokens = 512, temperature = 0.3, json = false } = {}) {
+async function askGeminiDirect(prompt, media, { maxOutputTokens = 512, temperature = 0.3, json = false, thinkingLevel = AI_THINK_MIN } = {}) {
   if (!geminiModel) throw new Error('AI is not configured yet');
   const parts = [{ text: prompt }];
   (media || []).forEach(m => parts.push({ inlineData: { mimeType: m.mimeType, data: m.data } }));
-  const generationConfig = { maxOutputTokens, temperature, thinkingConfig: { thinkingLevel: AI_THINK_MIN } };
+  const generationConfig = { maxOutputTokens, temperature, thinkingConfig: { thinkingLevel } };
   if (json) generationConfig.responseMimeType = 'application/json';
   const res = await geminiModel.generateContent({ contents: [{ role: 'user', parts }], generationConfig });
-  return (res.response.text() || '').trim();
+  const text = (res.response.text() || '').trim();
+  if (!text) throw new Error('Gemini returned an empty reply');
+  return text;
 }
 
 /* What the chooser prints. It reports only what it KNOWS — the routes in the
@@ -1006,12 +1041,12 @@ function aiEngineChoicePreview(v) {
   // without committing the choice, so Cancel really cancels.
   const el = document.getElementById('aiEngineStatus');
   if (!el) return;
-  const was = getAiEngine();
+  const was = _aiSharedEngine;
   try {
-    localStorage.setItem(AI_ENGINE_STORE.engine, AI_ENGINES.includes(v) ? v : 'gemini');
+    _aiSharedEngine = AI_ENGINES.includes(v) ? v : 'openai';
     renderAiEngineStatus();
   } finally {
-    try { localStorage.setItem(AI_ENGINE_STORE.engine, was); } catch (e) { /* nothing to put back */ }
+    _aiSharedEngine = was;
   }
 }
 
@@ -1030,6 +1065,8 @@ function openAiEngineSettings() {
   const eng = aiPreferredEngine();
   document.querySelectorAll('input[name="aiEngineChoice"]').forEach(r => { r.checked = r.value === eng; });
   const modelSel = document.getElementById('aiEngineModel');
+  delete modelSel.dataset.manualChoice;
+  modelSel.onchange = () => { modelSel.dataset.manualChoice = 'true'; };
   modelSel.value = getOpenAiModel();
   if (!modelSel.value) modelSel.value = OPENAI_DEFAULT_MODEL;   // stored model no longer offered
   const imgSel = document.getElementById('aiEngineImageModel');
@@ -1087,7 +1124,7 @@ function closeAiEngineSettings() {
 
 async function saveAiEngineSettings() {
   const picked = document.querySelector('input[name="aiEngineChoice"]:checked');
-  const eng = picked ? picked.value : 'gemini';
+  const eng = picked ? picked.value : 'openai';
   /* The engine is a setting for the WHOLE centre, so it goes to the server —
      and only the admin may write it. Everything else in this dialog (the
      model, the fallback key) stays device-local, because that is what those
@@ -1114,7 +1151,11 @@ async function saveAiEngineSettings() {
   const kimiModel = ((kimiModelEl && kimiModelEl.value) || '').trim() || KIMI_DEFAULT_MODEL;
   try {
     localStorage.setItem(AI_ENGINE_STORE.engine, eng);
+    localStorage.setItem(AI_ENGINE_STORE.engineGen, OPENAI_MODEL_GEN);
+    localStorage.setItem(AI_ENGINE_STORE.engineChoice, 'manual');
     localStorage.setItem(AI_ENGINE_STORE.model, model);
+    localStorage.setItem(AI_ENGINE_STORE.modelGen, OPENAI_MODEL_GEN);
+    if (document.getElementById('aiEngineModel').dataset.manualChoice === 'true') localStorage.setItem(AI_ENGINE_STORE.modelChoice, 'manual');
     localStorage.setItem(AI_ENGINE_STORE.imageModel, imageModel);
     if (key) localStorage.setItem(AI_ENGINE_STORE.key, key);
     else localStorage.removeItem(AI_ENGINE_STORE.key);
@@ -2443,7 +2484,7 @@ async function enterApp(user) {
 
 // App version shown to admins in the sidebar. BUMP THIS on every change you
 // deploy (see CLAUDE.md) so the admin can confirm the latest build is live.
-const APP_VERSION = 'v2.39.0';
+const APP_VERSION = 'v2.40.0';
 
 // =====================================================================
 // THE SUBJECT SWITCHER — one student, four subjects (v2.6.0)
@@ -4004,7 +4045,7 @@ function createBlock(type) {
     case 'widget':
       block.html = '';         // the generated single-file widget document
       block.comments = '';     // the admin's extra instructions to the builder
-      block.engine = 'gemini'; // 'gemini' | 'openai'
+      block.engine = 'auto'; // shared preference, with Gemini and Kimi backups
       block.effort = 'high';   // 'standard' | 'high' | 'pro'
       block.height = 480;      // iframe height (px) when shown to the student
       break;
@@ -5533,10 +5574,9 @@ function makeBlockInsertBar(index) {
 // =====================================================================
 const WIDGET_HTML_MAX = 300000;   // ~300 KB — a question doc must stay well under Firestore's 1 MB
 const WIDGET_EFFORTS = {
-  // 'pro' is deliberately uncapped: no output-token ceiling, maximum thinking.
   standard: { label: 'Standard', gem: { thinkingLevel: AI_THINK_MIN, maxOutputTokens: 16384 }, oa: { effort: 'low',    maxTokens: 16384 } },
-  high:     { label: 'High',     gem: { thinkingLevel: 'high',    maxOutputTokens: 32768 }, oa: { effort: 'medium', maxTokens: 32768 } },
-  pro:      { label: 'Pro — no limits', gem: { thinkingLevel: 'high' },                    oa: { effort: 'high' } },
+  high:     { label: 'High',     gem: { thinkingLevel: 'high',    maxOutputTokens: 32768 }, oa: { effort: 'high', maxTokens: 32768 } },
+  pro:      { label: 'Pro', gem: { thinkingLevel: 'high', maxOutputTokens: 65536 }, oa: { effort: 'max', maxTokens: 65536 } },
 };
 let _widgetBusy = {};             // blockId -> true while a build is running
 
@@ -5548,13 +5588,14 @@ function _widgetSrcdocAttr(html) {
 function renderWidgetBlockEditor(block) {
   const busy = !!_widgetBusy[block.id];
   const eff = WIDGET_EFFORTS[block.effort] ? block.effort : 'high';
-  const hasKey = !!getOpenAiKey();
   const has = !!(block.html || '').trim();
   const engineSel = `
     <select class="form-input" style="width:auto;min-width:130px;" ${busy ? 'disabled' : ''}
             onchange="saveBlockField('${block.id}', 'engine', this.value)">
-      <option value="gemini" ${block.engine !== 'openai' ? 'selected' : ''}>✨ Gemini</option>
-      <option value="openai" ${block.engine === 'openai' ? 'selected' : ''} ${hasKey ? '' : 'disabled'}>🤖 ChatGPT${hasKey ? '' : ' — add key in AI Engine'}</option>
+      <option value="auto" ${!AI_ENGINES.includes(block.engine) ? 'selected' : ''}>🤖 Centre default (ChatGPT)</option>
+      <option value="openai" ${block.engine === 'openai' ? 'selected' : ''}>🤖 ChatGPT</option>
+      <option value="gemini" ${block.engine === 'gemini' ? 'selected' : ''}>✨ Gemini</option>
+      <option value="kimi" ${block.engine === 'kimi' ? 'selected' : ''}>🌙 Kimi</option>
     </select>`;
   const effortSel = `
     <select class="form-input" style="width:auto;min-width:150px;" ${busy ? 'disabled' : ''}
@@ -5647,47 +5688,23 @@ function _widgetSpecPrompt(block) {
   ].join('\n');
 }
 
-// One call, on the engine and at the effort the admin chose for THIS block.
-// No cross-engine fallback here (unlike askGemini): the admin picked the
-// engine on purpose, and silently swapping it would misattribute the result.
+// Widgets use the same server-first routes and automatic backups as all other
+// text and vision work. Explicit block choices set the first provider only.
 async function _widgetAskAI(engine, effortKey, rawPrompt) {
   // The third and last door to a model — see ZH_PROMPT_RULES. A widget's
   // labels, buttons and feedback are read by the same Chinese student.
   const prompt = _zhPrompt(rawPrompt);
   const eff = WIDGET_EFFORTS[effortKey] || WIDGET_EFFORTS.high;
-  if (engine === 'openai') {
-    const key = getOpenAiKey();
-    if (!key) throw new Error('No ChatGPT key — add one under AI Engine in the sidebar, or switch to Gemini');
-    const model = getOpenAiModel();
-    const body = { model, messages: [{ role: 'user', content: prompt }] };
-    if (eff.oa.maxTokens) body.max_completion_tokens = eff.oa.maxTokens;
-    // Reasoning models take an effort knob; older chat models 400 on it.
-    if (OPENAI_REASONING_RE.test(model)) body.reasoning_effort = eff.oa.effort;
-    const res = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + key },
-      body: JSON.stringify(body)
-    });
-    if (!res.ok) {
-      let detail = '';
-      try { const ej = await res.json(); detail = ej && ej.error ? ej.error.message : ''; } catch (e) { /* non-JSON body */ }
-      throw new Error('ChatGPT error ' + res.status + (detail ? ': ' + detail : ''));
-    }
-    const data = await res.json();
-    const text = data?.choices?.[0]?.message?.content;
-    if (typeof text !== 'string' || !text.trim()) throw new Error('ChatGPT returned an empty reply');
-    return text;
-  }
-  if (!geminiModel) throw new Error('Gemini is not configured yet');
-  const generationConfig = { temperature: 0.4, thinkingConfig: { thinkingLevel: eff.gem.thinkingLevel } };
-  if (eff.gem.maxOutputTokens) generationConfig.maxOutputTokens = eff.gem.maxOutputTokens;
-  const res = await geminiModel.generateContent({
-    contents: [{ role: 'user', parts: [{ text: prompt }] }],
-    generationConfig
-  });
-  const text = (res.response.text() || '').trim();
-  if (!text) throw new Error('Gemini returned an empty reply');
-  return text;
+  const routes = AI_ENGINES.includes(engine)
+    ? [engine].concat(AI_ENGINES.filter(e => e !== engine)).flatMap(_aiRoutesFor)
+    : aiEngineOrder();
+  return _aiAsk(prompt, null, {
+    maxOutputTokens: eff.oa.maxTokens,
+    exactOutputBudget: true,
+    reasoningEffort: eff.oa.effort,
+    thinkingLevel: eff.gem.thinkingLevel,
+    temperature: 0.4
+  }, routes);
 }
 
 // Pull the HTML document out of the reply: strip code fences, cut from the
@@ -5718,7 +5735,7 @@ async function _widgetRun(blockId, btn, buildPrompt) {
   _widgetBusy[blockId] = true;
   renderBlocks();
   try {
-    const html = _widgetExtractHtml(await _widgetAskAI(block.engine === 'openai' ? 'openai' : 'gemini',
+    const html = _widgetExtractHtml(await _widgetAskAI(block.engine || 'auto',
       block.effort, buildPrompt(block)));
     // The build outlived the render — the admin may have deleted the block.
     const live = blocks.find(b => b.id === blockId);
@@ -12162,7 +12179,7 @@ async function _cropBoxFromScreenshot(fullDataUrl, box) {
 // far easier task than on the full page, so leftover sentences above/below
 // the figure get cut dependably. Any failure returns the crop unchanged.
 async function _aiRefineCrop(dataUrl) {
-  if (!geminiModel) return dataUrl;
+  if (!window.__aiReady()) return dataUrl;
   try {
     const b64 = dataUrl.split(',')[1] || '';
     const prompt =
@@ -13899,7 +13916,7 @@ async function runBankAiSearch() {
   const instruction = (document.getElementById('bankAiSearch')?.value || '').trim();
   if (!instruction) { _bankAiStatus('Type an instruction first, e.g. "find all questions that involve expansion of objects".', true); return; }
   if (bankAiBusy) return;
-  if (!geminiModel) { _bankAiStatus('AI is not ready yet — please wait a moment and try again.', true); return; }
+  if (!window.__aiReady()) { _bankAiStatus('AI is not ready yet — please wait a moment and try again.', true); return; }
   if (questionBank.length === 0) { _bankAiStatus('The question bank is empty.', true); return; }
 
   bankAiBusy = true;
@@ -37717,7 +37734,7 @@ function renderOeqReview(){
 }
 async function runOeqCompare(year){
   if (_oeqBusyYear) return;
-  if (!geminiModel){ showToast('AI is not ready yet — please wait a moment and try again', 'error'); return; }
+  if (!window.__aiReady()){ showToast('AI is not ready yet — please wait a moment and try again', 'error'); return; }
   const nums = Object.keys(PP_OEQ_KEYS[year] || {}).map(Number).sort((a,b)=>a-b);
   _oeqBusyYear = year;
   renderOeqReview();

@@ -2137,8 +2137,8 @@ when that project's billing cap is hit they **all die at once and
 identically** — `[429] Your billing account has exceeded its monthly spending
 cap`, on every call, on every device, until the month turns over.
 
-- **THE ORDER IS THE DESIGN**: Gemini, then **ChatGPT on the SERVER**, then
-  ChatGPT on a key pasted into this browser. The chooser reverses it. That is
+- **THE ORDER IS THE DESIGN**: **ChatGPT on the SERVER**, then an optional
+  ChatGPT browser key, then Gemini and Kimi. The chooser changes the first provider. That is
   what choosing an engine now means: **which is tried FIRST, never which is
   available.**
 - **The failover used to go ONE WAY, which is why it never helped.** The old
@@ -2178,7 +2178,7 @@ cap`, on every call, on every device, until the month turns over.
   to carry their own copy of it, and both carried their own copy of the
   one-way ChatGPT fallback too.
 - **A REASONING MODEL IS A FAMILY, NOT ONE ID** (`OPENAI_REASONING_RE`,
-  v2.35.0). The default is **`gpt-6-astra`** now, and gpt-5.x and gpt-6-astra
+  v2.35.0). The default is **`gpt-6.1-sol`** now, and gpt-5.x and gpt-6.1-sol
   want the same request SHAPE — `reasoning_effort` yes, `temperature` never.
   A gate written as `/^gpt-5/` therefore does not merely miss the newer model,
   it sends it the WRONG request: a temperature it answers with a **400**, and
@@ -2258,8 +2258,29 @@ that only the admin can write.
 - **It comes down on sign-out**, or one account's engine setting goes on
   governing the next person to sign in on the device — the same rule the
   teaching-notes listener carries.
-- **An unset field means Gemini**, the default every app already had, so a
-  centre that never touches this is unaffected.
+- **An unset field means ChatGPT**, as does an unmarked legacy Gemini default.
+  `aiEngineAt` / `aiEngineBy` preserve a deliberate centre-wide choice. Local
+  model defaults migrate once under `OPENAI_MODEL_GEN = 'sol61'`; explicit model
+  changes are marked so future default upgrades can preserve them.
+
+### GPT 6.1 Sol defaults (v2.40.0)
+
+Text, image/PDF reading and reasoning share `gpt-6.1-sol`. The client sends the
+chosen model and supported `reasoningEffort` to the Maths server, which applies
+its own model permissions. Low is the standard effort; widget High and Pro
+request high and max. Widgets use the same server-first fallback loop, preserving
+their output ceilings with `exactOutputBudget: true`. Gemini and Kimi remain
+automatic backups. Audio transcription and image generation keep their specialised
+models. The shared Maths functions must be deployed for the server policy to take
+effect; static files alone cannot update a running Cloud Function.
+
+Kimi K3 uses `max_completion_tokens` and `reasoning_effort` (low/high/max),
+without temperature, top_p or a thinking field. Medium maps to high and xhigh
+to max on that backup. Other deliberately selected Moonshot models keep their
+existing request format.
+
+Run `node tools/model-defaults-tests.mjs` and `node tools/ai-routes-tests.mjs`
+after changing this policy.
 - **The `aiEngineConfig` callable is kept as the FALLBACK** for the case where
   the direct read or write is ever denied: it goes through the Admin SDK,
   which bypasses rules.
