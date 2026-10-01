@@ -1,0 +1,52 @@
+name: Publish validated model defaults
+
+on:
+  push:
+    branches:
+      - 'codex/sol61-model-defaults-v2400'
+    paths:
+      - '.github/workflows/codex-publish-model-defaults.yml'
+      - '.codex-publish/apply-model-deltas.py'
+      - '.codex-publish/model-deltas.json'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: publish-model-defaults-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: true
+      - name: Apply and validate exact file deltas
+        run: python3 .codex-publish/apply-model-deltas.py .codex-publish/model-deltas.json
+      - name: Commit and push after checking the branch has not moved
+        env:
+          EXPECTED_HEAD: ${{ github.sha }}
+          TARGET_REF: ${{ github.ref }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$TARGET_REF" = 'refs/heads/codex/sol61-model-defaults-v2400'
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          remote_head="$(git ls-remote --heads origin "$TARGET_REF" | cut -f1)"
+          test "$remote_head" = "$EXPECTED_HEAD"
+          if git diff --cached --quiet; then
+            echo 'No staged change; refusing an empty publish commit.' >&2
+            exit 1
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'Default to GPT 6.1 Sol with Gemini and Kimi backups'
+          test "$(git rev-parse HEAD^)" = "$EXPECTED_HEAD"
+          test "$(git ls-remote --heads origin "$TARGET_REF" | cut -f1)" = "$EXPECTED_HEAD"
+          git push origin "HEAD:$TARGET_REF"
+          echo "Published validated commit $(git rev-parse HEAD)"
