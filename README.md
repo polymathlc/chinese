@@ -22,6 +22,9 @@ What is different here:
 Three files are the app: **`index.html`** (markup + CSS), **`app.js`** (all of
 the JavaScript) and **`pinyin-dict.json`** (the keyboard's dictionary, fetched
 on first use). They ship together — deploy the directory, never a single file.
+The directory also holds the 📲 installable-app files (`manifest.webmanifest`,
+`sw.js`, `offline.html`, `pwa-install.js`, `assets/app-icons/`). See
+`CLAUDE.md` → "📲 Installable app".
 
 ---
 

@@ -2484,7 +2484,7 @@ async function enterApp(user) {
 
 // App version shown to admins in the sidebar. BUMP THIS on every change you
 // deploy (see CLAUDE.md) so the admin can confirm the latest build is live.
-const APP_VERSION = 'v2.40.0';
+const APP_VERSION = 'v2.41.0';
 
 // =====================================================================
 // THE SUBJECT SWITCHER — one student, four subjects (v2.6.0)
@@ -2745,8 +2745,13 @@ function configureSidebarForRole(role) {
     // EMPLOYEE_PAGES. Adding a nav item elsewhere in the app therefore cannot
     // silently grant an employee access to it.
     studentItems.forEach(el => el.style.display = 'none');
+    // The one exception is 📲 Install app (.nav-install): it opens no page and
+    // reaches no data, so it grants nothing — and hiding it would leave an
+    // employee with the installer's floating button instead, parked on top of
+    // Ai-nstein and the Work Sessions bar in the bottom-right corner.
     document.querySelectorAll('.nav-item').forEach(el => {
-      el.style.display = EMPLOYEE_PAGES.indexOf(el.dataset.page || '') >= 0 ? '' : 'none';
+      const allowed = EMPLOYEE_PAGES.indexOf(el.dataset.page || '') >= 0 || el.classList.contains('nav-install');
+      el.style.display = allowed ? '' : 'none';
     });
     // The section headings ("Build", "Manage", …) are flat siblings of the
     // items, not wrappers, so there is no way to tell which survive. With five

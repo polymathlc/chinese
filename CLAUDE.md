@@ -28,6 +28,60 @@ beside the other two.
 - `const` declared mid-module is in its temporal dead zone earlier in the file —
   only read such values at call time, not at module-eval time.
 
+## 📲 Installable app (Polymath install kit v2.0.0) — shipped in v2.41.0
+
+The portal installs as an app on PC, Android and iPhone/iPad (a Progressive Web
+App — no app store). Students get it from **📲 Install app** in the sidebar.
+
+- **The files.** `manifest.webmanifest` ("Polymath Chinese" / "Chinese";
+  `id`, `start_url` and `scope` are all `./`, so the same file works at
+  `polymathlc.com.sg/chinese/` and on github.io), the icons in
+  `assets/app-icons/` (192/512 `any`, 192/512 `maskable`, the 180 px
+  `apple-touch-icon`, a 32 px favicon), `sw.js`, `offline.html`,
+  `pwa-install.js`, and the head tags in `index.html` (search `📲 Installable
+  app`: manifest, theme-color, favicon, apple-touch-icon, apple-mobile-web-app-*,
+  and the inline `[data-pwa-install][data-pwa-hidden]` hiding rule). The
+  installer loads at the bottom of `<body>` as a classic `<script defer>`, NOT a
+  module. Its tag carries the app's name, key (`chinese`), icon and accent
+  (`#C62828`). Its `?v=` is the **kit's** version, not `APP_VERSION`.
+- **`pwa-install.js` is byte for byte the shared Polymath install kit.** Every
+  Polymath app carries the same file (the student dashboard, Maths, Ans Key,
+  Study Buddy, Rewards, English, and polymathlc/cer's `student/` and `online/`).
+  Change it in all of them together, from the kit. Never fork it here. A local
+  change goes in `index.html` instead (see the corner nudge below).
+- **`sw.js` never caches the app.** It answers only same-origin GET page loads,
+  network first, and shows `offline.html` when the network fails. Scripts,
+  `app.js`, `pinyin-dict.json`, Firebase, images, POSTs and other origins get no
+  `respondWith` at all, so releases still reach phones the usual way.
+  `polymathlc.com.sg` is ONE origin shared by every Polymath app, so Cache
+  Storage is shared too. This worker only creates and deletes caches named
+  `polymath-chinese-shell-…`, never another app's. Its scope is this folder;
+  `journey/` sits under it and is left alone (only a load with no connection
+  would ever get the offline page). Since kit v2.0.1 (sw `2.0.1`) `offline.html`
+  carries its icon inline as a `data:` URI and is the only file precached. The
+  worker answers page loads only, so an icon *file* never arrived offline.
+- **Controls start `data-pwa-hidden`.** The installer shows them. It hides them
+  again inside the installed app and inside another page's frame (where nothing
+  can be installed).
+- **Where the control is:** `.nav-item.nav-install` at the very bottom of the
+  sidebar nav, after Settings. It is the same item the Science portal has, and it
+  belongs to no role group. That means it is not `admin-only` or `student-only`,
+  and it has no `data-page`, so bookmarks and `navigateTo` skip it. The employee
+  default-deny in `configureSidebarForRole` lets it through by its class. It
+  opens no page and grants nothing, and hiding it would hand an employee the
+  floating button instead.
+- **The floating button** (`data-floating="auto"`) covers every screen with no
+  control of its own: the landing, sign-in and register pages. Once signed in,
+  the sidebar item takes over and it hides. In its corner, the 拼音 pill (shown as
+  soon as the caret is in the username box) and the toasts step up above it with
+  two `body:has(> .pwa-fab:not([hidden]))` rules beside the `.zhime-pill` CSS.
+  The kit file is never edited.
+- Run **`node --test tools/pwa-install-tests.mjs`** and
+  **`PW=/path/to/playwright/index.mjs node tools/pwa-install-browser.mjs`**
+  after touching any of it. CI runs both (`.github/workflows/installable-app.yml`).
+  The browser check asks Chrome whether the page is installable and walks the
+  desktop, iPhone, installed and offline cases.
+
 ## Where the data lives — read this before touching any Firestore path
 
 This app shares a Firebase PROJECT with its two siblings and shares **no data**

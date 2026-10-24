@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#FFFFFF">
+<title>You're offline | Polymath Chinese</title>
+<!-- 📲 Shown by sw.js when the installed Polymath Chinese app (or any page under it)
+     is opened with no connection. Self-contained: no fonts, scripts, styles or
+     pictures from elsewhere, because none of them can be fetched right now.
+     Polymath install kit v2.0.1. -->
+<style>
+  @font-face { font-family: 'OfflineQuestion'; src: local('Roboto'), local('Roboto-Regular'), local('Arial'), local('Helvetica'); unicode-range: U+003F; }
+  :root {
+    --ink: #1A1A1A;
+    --muted: #5C5C5C;
+    --paper: #FFFFFF;
+    --wash: #FAFAFA;
+    --line: #E8E8E4;
+    --accent: #C62828;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    display: grid;
+    place-items: center;
+    padding: 24px 16px;
+    background: var(--wash);
+    color: var(--ink);
+    font: 16px/1.6 'OfflineQuestion', 'Century Gothic', CenturyGothic, AppleGothic, system-ui, sans-serif;
+  }
+  main {
+    max-width: 420px;
+    text-align: center;
+    background: var(--paper);
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    padding: 32px 24px 28px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.04), 0 4px 12px rgba(0,0,0,0.06);
+  }
+  img { width: 88px; height: 88px; border-radius: 20px; border: 1px solid var(--line); }
+  h1 { font-size: 1.35rem; margin: 18px 0 6px; letter-spacing: 0.01em; }
+  p { color: var(--muted); margin: 0 0 22px; }
+  button {
+    font: inherit;
+    font-weight: 700;
+    color: #fff;
+    background: var(--accent);
+    border: 0;
+    border-radius: 10px;
+    padding: 12px 22px;
+    cursor: pointer;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.05), 0 2px 8px rgba(0,0,0,0.08);
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+  }
+  button:hover { transform: translateY(-1px); box-shadow: 0 2px 4px rgba(0,0,0,0.06), 0 4px 16px rgba(0,0,0,0.12); }
+  button:focus-visible { outline: 3px solid var(--ink); outline-offset: 2px; }
+</style>
+</head>
+<body>
+<main>
+  <!-- The icon is INSIDE this file (a data: URI): sw.js answers page loads only, so with no
+       connection a separate icon file could never arrive. -->
+  <img src="data:image/png;base64,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" alt="" width="88" height="88">
+  <h1>You're offline</h1>
+  <p>Polymath Chinese needs the internet to load your lessons and progress. Check your Wi-Fi or mobile data, then try again.</p>
+  <button type="button" id="retry">Try again</button>
+</main>
+<script>
+  // Go back to the page that was asked for (the address bar still holds it); come back online → retry by itself.
+  document.getElementById('retry').addEventListener('click', function () { location.reload(); });
+  window.addEventListener('online', function () { location.reload(); });
+</script>
+</body>
+</html>
