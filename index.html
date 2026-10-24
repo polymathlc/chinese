@@ -4,6 +4,18 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Chinese Learning Portal — Polymath Learning Centre</title>
+<!-- 📲 Installable app (Polymath install kit v2.0.0): manifest + icons make "Install" / "Add to Home Screen"
+     work on PC, Android and iPhone/iPad. pwa-install.js registers sw.js and drives every [data-pwa-install] control.
+     See CLAUDE.md → "📲 Installable app". -->
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#FFFFFF">
+<link rel="icon" type="image/png" sizes="32x32" href="assets/app-icons/favicon-32.png">
+<link rel="apple-touch-icon" href="assets/app-icons/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Chinese">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<style>[data-pwa-install][data-pwa-hidden]{display:none!important}</style>
 <link rel="preconnect" href="https://dl.dropboxusercontent.com" crossorigin>
 <link rel="dns-prefetch" href="https://dl.dropboxusercontent.com">
 <link rel="preconnect" href="https://drive.google.com" crossorigin>
@@ -6537,6 +6549,17 @@ body.zhime-field .zhime-pill, .zhime-pill.on { display: inline-flex; }
 }
 @media print { .zhime-bar, .zhime-pill { display: none !important; } }
 
+/* 📲 The install kit's floating "Install app" button (pwa-install.js, .pwa-fab,
+   bottom-right, z-index 9990) only shows on a screen with no install control
+   of its own — the landing, sign-in and register pages; once signed in, the
+   sidebar's 📲 Install app takes over and it hides. Those screens keep two
+   things of the app's own in the same corner: the 拼音 pill (it appears as soon
+   as the caret is in the username box) and the toasts (a sign-in error). Both
+   step up above the button while it is showing, rather than the button being
+   moved, so the kit's file stays byte for byte the shared one. */
+body:has(> .pwa-fab:not([hidden])) .zhime-pill { bottom: 70px; }
+body:has(> .pwa-fab:not([hidden])) .toast-container { bottom: 72px; }
+
 </style>
 </head>
 <body>
@@ -7086,6 +7109,14 @@ body.zhime-field .zhime-pill, .zhime-pill.on { display: inline-flex; }
       <div class="nav-item student-only" data-page="familysettings" onclick="navigateTo('familysettings')" style="display:none;">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h0a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h0a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v0a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
         Settings
+      </div>
+      <!-- 📲 Install app (pwa-install.js, Polymath install kit): the browser's own install prompt, or
+           step-by-step help on iPhone / iPad / Safari. For EVERY role, so it is neither admin-only nor
+           student-only, and it has no data-page (it opens no page, so bookmarks and navigateTo skip it).
+           Starts data-pwa-hidden; the installer shows it, and hides it again inside the installed app. -->
+      <div class="nav-item nav-install" data-pwa-install data-pwa-hidden role="button" tabindex="0" title="Install Polymath Chinese as an app on this computer, phone or tablet — its own icon and window, no app store needed">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="2" width="14" height="20" rx="2"/><path d="M12 7v7"/><path d="M9 11l3 3 3-3"/><path d="M10 18h4"/></svg>
+        Install app
       </div>
     </nav>
     <div id="saveStatusIndicator" style="display:none;width:100%;text-align:center;font-size:0.7rem;padding:4px 12px;border-radius:6px;margin:0 8px 6px;font-family:'Space Mono',monospace;letter-spacing:0.03em;"></div>
@@ -10584,5 +10615,8 @@ Q22 邻居总是对父亲说：“你儿子可真‘厉害’！”是因为____
      before the page can paint, and the browser fetches and compiles it in
      parallel with the markup instead of afterwards. -->
 <script type="module" src="app.js"></script>
+<!-- 📲 The installer (Polymath install kit v2.0.0) — a classic deferred script, never type=module.
+     ?v= is the KIT's version, not APP_VERSION: the file is shared byte for byte with every Polymath app. -->
+<script defer src="pwa-install.js?v=2.0.0" data-app-name="Polymath Chinese" data-app-key="chinese" data-app-icon="assets/app-icons/icon-192.png" data-accent="#C62828" data-sw="sw.js" data-floating="auto"></script>
 </body>
 </html>
